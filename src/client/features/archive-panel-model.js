@@ -71,6 +71,7 @@ export function createArchivePanel({ client, isEnabled }) {
     const result = await client.list()
     if (result.ok) {
       rows = result.rows
+      titles = typeof client.titleMap === 'function' ? await client.titleMap() : {}
       state = 'ready'
       message = ''
       return { ok: true }
