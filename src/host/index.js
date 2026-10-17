@@ -26,7 +26,16 @@ import { join } from 'node:path'
 
 export { Config, isOn, readConfig }
 export const name = 'dsh-toolbox'
-export const inject = ['tools']
+/**
+ * `optional` matters: `ctx.get('workspaceRegistry')` answers undefined for a
+ * service this plugin never declared, even when the service exists — that is why
+ * the first probe said workspaceRegistry=missing while sessions worked.
+ * Declaring them OPTIONAL keeps the plugin loadable in a profile that lacks one.
+ */
+export const inject = {
+  required: ['tools'],
+  optional: ['webServer', 'workspaceRegistry', 'sessions', 'sessionQuery'],
+}
 
 export const GUARDED_TOOL = 'session_search'
 
