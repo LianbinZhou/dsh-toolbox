@@ -30,8 +30,12 @@ import { createFsProbe } from './probe.js'
  * @returns {object|null} the adapter, or null when the registry is missing
  */
 export function createSessionAdapter({ registry, sessions, sessionsRoot, storageFallback } = {}) {
-  if (!registry || typeof registry !== 'object') return null
-  if (typeof registry.unarchiveSession !== 'function') return null
+  // A registry is what makes UNARCHIVE possible, but it is not what makes the
+  // LIST possible: the archived ids are also persisted on disk. Degrading to
+  // read-only beats showing the user an empty list when the seam is unavailable.
+  const hasRegistry = Boolean(registry && typeof registry === 'object')
+  const canUnarchive = Boolean(hasRegistry && typeof registry.unarchiveSession === 'function')
+  if (!hasRegistry && typeof storageFallback !== 'function' && typeof dshHome !== 'function') return null
 
   /**
    * The archived set, read TOLERANTLY.
@@ -43,7 +47,7 @@ export function createSessionAdapter({ registry, sessions, sessionsRoot, storage
   const readArchived = () => {
     let ids
     try {
-      ids = registry.archivedSessionIds
+      ids = hasRegistry ? registry.archivedSessionIds : undefined
       if (typeof ids === 'function') ids = ids.call(registry)
       if (ids && typeof ids.getSnapshot === 'function') ids = ids.getSnapshot()
       else if (ids && typeof ids.get === 'function') ids = ids.get()
@@ -155,7 +159,12 @@ export function createSessionAdapter({ registry, sessions, sessionsRoot, storage
     readArchived,
     isLive,
     probe,
-    unarchive: (id) => registry.unarchiveSession(id),
+    unarchive: (id) => {
+      if (!canUnarchive) throw new Error('workspaceRegistry unavailable: unarchive is disabled')
+      return registry.unarchiveSession(id)
+    },
+    /** Read-only mode: the list works, unarchive does not. */
+    readOnly: !canUnarchive,
     // The old panel dropped workspace rows and scrubbed a projection cache. Both
     // are best-effort; the delete is already durable when they run.
     dropWorkspaceRows: () => {},
@@ -169,7 +178,6 @@ export function adapterIsUsable(adapter) {
     adapter &&
       typeof adapter.readArchived === 'function' &&
       typeof adapter.isLive === 'function' &&
-      typeof adapter.probe === 'function' &&
-      typeof adapter.unarchive === 'function',
+      typeof adapter.probe === 'function',
   )
 }

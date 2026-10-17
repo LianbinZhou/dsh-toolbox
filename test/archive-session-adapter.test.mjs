@@ -22,10 +22,12 @@ function registry(overrides = {}) {
   }
 }
 
-test('adapter · no workspaceRegistry means NO adapter (fail closed)', () => {
-  assert.equal(createSessionAdapter({ sessions: {} }), null)
-  assert.equal(createSessionAdapter({ registry: {} }), null, 'a registry without unarchiveSession is not enough')
-  assert.equal(adapterIsUsable(null), false)
+test('adapter · no registry degrades to READ-ONLY instead of hiding the list', () => {
+  const adapter = createSessionAdapter({ sessions: {}, storageFallback: () => [ID] })
+  assert.ok(adapter, 'the list must still work')
+  assert.equal(adapter.readOnly, true)
+  assert.deepEqual(adapter.readArchived(), [ID], 'the ids come from the persisted unit')
+  assert.throws(() => adapter.unarchive(ID), /unarchive is disabled/, 'unarchive needs the registry')
 })
 
 test('adapter · the archived set is re-read on every call, never cached', () => {
@@ -62,10 +64,11 @@ test('adapter · a null getter yields an empty list instead of throwing', () => 
   assert.deepEqual(adapter.readArchived(), [])
 })
 
-test('adapter · is usable only when every required member exists', () => {
+test('adapter · usable means read + live + probe', () => {
   const good = createSessionAdapter({ registry: registry(), sessions: {}, sessionsRoot: 'C:/tmp/sessions', storageFallback: () => [] })
   assert.equal(adapterIsUsable(good), true)
-  assert.equal(adapterIsUsable({ readArchived() {}, isLive() {}, probe() {} }), false, 'no unarchive => not usable')
+  assert.equal(adapterIsUsable({ readArchived() {}, isLive() {}, probe() {} }), true, 'a read-only adapter is enough for the list')
+  assert.equal(adapterIsUsable({ readArchived() {}, isLive() {} }), false, 'no probe => not usable')
 })
 
 
