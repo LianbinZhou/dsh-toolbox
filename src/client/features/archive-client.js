@@ -15,6 +15,8 @@
 
 export const TOKEN_PATH = '/api/archive-manager/token'
 export const DELETE_PATH = '/api/archive-manager/delete'
+export const LIST_PATH = '/api/archive-manager/list'
+export const UNARCHIVE_PATH = '/api/archive-manager/unarchive'
 export const CSRF_HEADER = 'x-dsh-toolbox'
 export const TOKEN_HEADER = 'x-dsh-toolbox-token'
 
@@ -86,6 +88,50 @@ export function createArchiveClient({ fetchImpl, base = () => '' } = {}) {
     })
   }
 
+  /**
+   * One authorized request. A 401 refreshes ONCE (shared) and retries ONCE.
+   * @returns {{status:number, response:object, reason?:string}}
+   */
+  async function authorized(path, init) {
+    let credential
+    try {
+      credential = token !== null ? token : await refresh()
+    } catch (error) {
+      return { status: 0, reason: 'token-unavailable' }
+    }
+    const send = (value) => fetchImpl(base() + path, {
+      ...init,
+      headers: { ...(init.headers ?? {}), [CSRF_HEADER]: '1', [TOKEN_HEADER]: value },
+      credentials: 'same-origin',
+      cache: 'no-store',
+    })
+    let response
+    try {
+      response = await send(credential)
+    } catch (error) {
+      return { status: 0, reason: 'network-error' }
+    }
+    if (response.status === 401) {
+      token = null
+      let fresh
+      try {
+        fresh = await refresh(true)
+      } catch (error) {
+        return { status: 401, reason: 'refresh-required' }
+      }
+      try {
+        response = await send(fresh)
+      } catch (error) {
+        return { status: 0, reason: 'network-error' }
+      }
+      if (response.status === 401) {
+        token = null
+        return { status: 401, reason: 'refresh-required' }
+      }
+    }
+    return { status: response.status, response }
+  }
+
   async function readJson(response) {
     try {
       return await response.json()
@@ -139,6 +185,37 @@ export function createArchiveClient({ fetchImpl, base = () => '' } = {}) {
         status: response.status,
         reason: body?.reason ?? (response.ok ? undefined : 'request-failed'),
       }
+    },
+
+
+    /** GET the archived rows. */
+    async list() {
+      if (disposed) return { ok: false, rows: [], reason: 'disposed' }
+      const result = await authorized(LIST_PATH, { method: 'GET' })
+      if (result.response === undefined) return { ok: false, rows: [], reason: result.reason }
+      if (result.status === 404) return { ok: false, rows: [], reason: 'http-404' }
+      if (result.status === 503) return { ok: false, rows: [], reason: 'http-503' }
+      const body = await readJson(result.response)
+      if (!result.response.ok || body?.ok === false) {
+        return { ok: false, rows: [], reason: body?.reason ?? 'request-failed' }
+      }
+      return { ok: true, rows: Array.isArray(body?.rows) ? body.rows : [] }
+    },
+
+    /** Undo the archive flag. */
+    async unarchive(sessionId) {
+      if (disposed) return { ok: false, status: 0, reason: 'disposed' }
+      const result = await authorized(UNARCHIVE_PATH, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sessionId }),
+      })
+      if (result.response === undefined) return { ok: false, status: 0, reason: result.reason }
+      if (result.status === 404) return { ok: false, status: 404, reason: 'http-404' }
+      if (result.status === 503) return { ok: false, status: 503, reason: 'http-503' }
+      const body = await readJson(result.response)
+      if (!result.response.ok) return { ok: false, status: result.status, reason: body?.reason ?? 'request-failed' }
+      return { ok: true, status: result.status }
     },
 
     /** Ask for a token without deleting anything (used on panel open). */
