@@ -77,8 +77,11 @@ export function makeWorld(options = {}) {
       const override = probeOverrides.get(id)
       if (override) return typeof override === 'function' ? override() : override
       if (failAt.step === 'probe') return { state: 'error', error: new Error('EACCES') }
-      if (!dirs.has(id)) return { state: 'absent' }
-      return { state: 'present', dir: dirs.get(id), identity: identity(id) }
+      // The real probe accepts both spellings (`<uuid>` and `session-<uuid>`).
+      const bare = String(id).replace(/^session-/, '')
+      const key = dirs.has(id) ? id : dirs.has('session-' + bare) ? 'session-' + bare : undefined
+      if (key === undefined) return { state: 'absent' }
+      return { state: 'present', dir: dirs.get(key), identity: identity(key) }
     },
     renamePath: (from, to) => {
       calls.rename.push({ from, to })
