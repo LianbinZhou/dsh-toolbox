@@ -101,9 +101,29 @@ export function mount(ctx, env) {
   // The body of the panel, in the same slot the plugin manager uses.
   env.track(ctx.slots.inject(MAIN_SLOT, () => ctx.slots.register({ name: MAIN_SLOT, key: PANEL_ID }, ArchiveView)))
   // The sidebar entry that selects it.
-  // A LIST slot wants id; the main slot wants key. They are different registries.\n  env.track(ctx.slots.inject(PANEL_SLOT, () => ctx.slots.register({ name: PANEL_SLOT, id: PANEL_ID, order: 200, label: () => '历史归档' }, SidebarRow)))
+  // A LIST slot wants id; the main slot wants key. They are different registries.\n  env.track(ctx.slots.inject(PANEL_SLOT, () => ctx.slots.register({ name: PANEL_SLOT, id: PANEL_ID, order: 200, label: () => '历史归档', locale: 'dsh-toolbox' }, SidebarRow)))
+
+  // Diagnostics: proves whether this feature mounted and what the slot registry
+  // actually holds. Removed on dispose.
+  const readEntries = () => {
+    try {
+      const list = typeof ctx.slots.entriesOfSlot === 'function' ? ctx.slots.entriesOfSlot(PANEL_SLOT) : undefined
+      return Array.isArray(list) ? list.map((entry) => entry.key ?? entry.id) : 'entriesOfSlot unavailable'
+    } catch (error) {
+      return 'threw: ' + String(error && error.message)
+    }
+  }
+  window.__DSH_TOOLBOX_ARCHIVE__ = {
+    mounted: true,
+    panelId: PANEL_ID,
+    mainSlot: MAIN_SLOT,
+    listSlot: PANEL_SLOT,
+    entries: readEntries,
+    apiEnabled: () => archiveApiEnabled(),
+  }
 
   return () => {
+    if (window.__DSH_TOOLBOX_ARCHIVE__) delete window.__DSH_TOOLBOX_ARCHIVE__
     panel.dispose()
   }
 }

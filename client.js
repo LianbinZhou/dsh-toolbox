@@ -2116,6 +2116,7 @@
   // src/client/features/archive-panel.js
   var PANEL_ID = "dsh-toolbox#archive";
   var MAIN_SLOT = "main";
+  var PANEL_SLOT2 = "sidebar.panellist";
   function archiveApiEnabled() {
     try {
       return cacheSwitches()?.archiveHttpApi === true;
@@ -2184,7 +2185,24 @@
       );
     }
     env.track(ctx.slots.inject(MAIN_SLOT, () => ctx.slots.register({ name: MAIN_SLOT, key: PANEL_ID }, ArchiveView)));
+    const readEntries = () => {
+      try {
+        const list = typeof ctx.slots.entriesOfSlot === "function" ? ctx.slots.entriesOfSlot(PANEL_SLOT2) : void 0;
+        return Array.isArray(list) ? list.map((entry) => entry.key ?? entry.id) : "entriesOfSlot unavailable";
+      } catch (error) {
+        return "threw: " + String(error && error.message);
+      }
+    };
+    window.__DSH_TOOLBOX_ARCHIVE__ = {
+      mounted: true,
+      panelId: PANEL_ID,
+      mainSlot: MAIN_SLOT,
+      listSlot: PANEL_SLOT2,
+      entries: readEntries,
+      apiEnabled: () => archiveApiEnabled()
+    };
     return () => {
+      if (window.__DSH_TOOLBOX_ARCHIVE__) delete window.__DSH_TOOLBOX_ARCHIVE__;
       panel.dispose();
     };
   }
