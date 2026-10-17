@@ -2,9 +2,10 @@
 
 把作者自建的几个 DSH 小插件收进**一个容器**：插件页只有一行，进去有 6 个开关，每个开关实时生效。
 
-> **状态：S1（骨架 + 纠错阶段）。**
-> 容器、事务化 scope、六个功能的契约与测试已就位；真实功能体在 S2–S5 从 `dsh-plugins/*` 迁移进来。
-> S1 边界：本包**尚未安装**到任何 profile。安装发生在 S2（那时才有可用的功能，而不是一个探针工具）。
+> **状态：S3 完成，已安装并在真机上验证。**
+> 6 个开关里有 **3 个是真功能**（会话搜索 / 划词引用 / 草稿保险箱），其余 3 个是桩，S4–S5 迁移。
+> 真实功能体从 `dsh-plugins/*` 逐个搬进来，旧 bundle 随之卸载；`session_search`、`dsh-quote-reply`、
+> `dsh-draft-saver` 三个旧包已经从 web profile 移除（仓库保留）。
 
 ---
 
@@ -63,36 +64,77 @@ dsh-toolbox/
 │   │   ├── scope.js          # 事务化 disposer 账本
 │   │   ├── registry.js       # 功能契约校验
 │   │   ├── switches.js       # configForms 读取 + 带标签的本地缓存
-│   │   └── features.js       # 5 个客户端功能（S1 桩）
+│   │   ├── features.js       # 5 个客户端功能的注册表
+│   │   └── features/
+│   │       ├── quote-reply.js    # 真功能 S2：划词引用（组件原样搬入）
+│   │       ├── draft-guard.js    # 真功能 S3：草稿存储守卫
+│   │       ├── draft-notice.js   # 真功能 S3：恢复提示条
+│   │       └── draft-saver.js    # 把上面两者装成"草稿保险箱"
 │   └── host/
 │       ├── config.js         # root volatile + readConfig/isOn
-│       └── index.js          # apply + guard
-└── test/                     # 29 项，全绿
+│       ├── index.js          # apply + guard
+│       └── features/session-search.js  # 真功能 S2：session_search 工具
+├── tools/
+│   ├── build.mjs             # esbuild 构建
+│   └── prove-red.mjs         # 把存储矩阵跑在旧实现上，证明测试真的咬人
+└── test/                     # 106 项，全绿
 ```
 
 客户端功能 5 个（`quote-reply` / `panel-menu` / `draft-saver` / `archive-panel` / `plugin-zh`）；
 `session-search` 是**纯宿主**功能，不在客户端清单里 —— 所以"6 个开关、5 个客户端功能"不是笔误。
 
+## 六个开关的真实状态
+
+| 开关 | 状态 | 功能体 |
+|---|---|---|
+| 会话搜索（宿主工具） | **真**（S2） | `session_search` 工具 + 接管 `session-query-sqlite` 的全文索引 seam |
+| 划词引用 | **真**（S2） | 划选一段 → 浮层「引用 / 复制」；组件从 `dsh-quote-reply` 原样搬入 |
+| 草稿保险箱 | **真**（S3） | 草稿存储守卫 + 恢复提示条 `[复制][清空][知道了]` |
+| 面板收纳 / 历史归档 / 插件汉化 | **桩** | S4–S5 才迁；现在拨动**不会有任何变化** |
+
 ## 构建与测试
 
 ```sh
-npm install          # 只装 esbuild（devDependency，精确 0.28.2）
-npm run build        # src/client/index.js -> client.js
-npm test             # 29 项：artifact / container / scope / host-config / leak / build-fresh
+npm install
+npm run build              # src/client/index.js -> client.js
+npm test                   # 106 项
+node tools/prove-red.mjs   # 把同一套存储矩阵跑在旧实现上：应报 14 红
 ```
 
 `npm test` **故意不预先构建**：`build-fresh` 先读已提交的 `client.js`，再原地重建并逐字节比对，
 专门用来抓"改了源码忘了 build"。
 
-## 已知边界（S1 阶段）
+`prove-red` 是测试的**反向证据**：它把同一套矩阵跑在 `test/fixtures/legacy-guard.mjs`（S3 之前那份 patch
+`Storage.prototype` 的实现）上，正常应有一片红。**如果哪天它全绿了，说明矩阵不再咬人**，工具会以退出码 1 报警。
 
-- `src/client/features.js` 里 5 个功能都是**桩**：只注册一个可撤销的监听，用来证明挂载/卸载正确。
-- `src/client/switches.js` 的缓存键带 `package + rowId` 标签，防止别的行/旧版本的值被回放；
-  但"缓存只用于 reversible 功能"这条**在容器里**执行，不在缓存里。
+## 草稿守卫（S3）的安全模型
+
+八条约束，逐条有测试：
+
+1. 只 patch `localStorage` **实例**；`Storage.prototype` 绝不碰（原型是 `sessionStorage` 与所有同源 Storage 共享的）
+2. 原型兜底分支带 `this` 守卫（默认关闭）
+3. 原始方法只捕获一次；备份 IO 永远走原始方法（不会递归）
+4. wrapper 带 `active` + `Symbol.for('dsh.draft-saver.patch')`；dispose 后旧引用**透明转发**
+5. dispose 只在"当前还是我"时还原；被别人覆盖则 `needs-refresh` 且**不动他的人工补丁**
+6. `WeakMap<storage, handle>` 单例；另一个 module 实例（HMR/双 eval）靠 `PATCH_MARK` 判 `conflict`
+7. dispose 幂等、不抛错、**绝不删 `dsh-draft-saver.backup.v1`、绝不 `clear()`**
+8. `lastRead` 与通知总线都是**每次 mount 一份**（关掉再开不带旧状态）
+
+外部复核（Pi）抓出并已修的两条 P1：
+
+- **坏备份不许顶替好草稿**：`backupRead()` 现在校验 `key` 前缀 + `raw` 能不能解析成草稿。不合格就当"没有备份"，
+  把用户原来的草稿交回去；**坏记录原样留着**（可人工恢复），等下次合法写入自然替换。
+- **`this` 守卫**：`localStorage.setItem.call(sessionStorage, ...)` 这类重绑调用只写它自己的接收者，
+  **不许**镜像进 `localStorage` 的备份。
+
+## 已知边界
+
+- `panel-menu` / `archive-panel` / `plugin-zh` 仍是桩（S4–S5）。
+- 守卫处于 `needs-refresh` / `unsupported` 时，目前只有 `console.warn` + `window.__DSH_TOOLBOX_DRAFT__`，
+  **还没有可见的界面提示**（复核 Bug 单 P2-3，待办）。
 - `plugin-zh` 必须走路 B（DOM + 完整还原）：路 A（官方 locale 注入）已判死 ——
-  `resolveText` 对字符串原样返回，而没有 `locale/` 的包序列化出来就是字符串；
-  且 `dsh-app-boot` 里 `ctx.locale` 出现 0 次，解析全在 boot 阶段。
-- 迁移（S2–S5）前必须卸载旧 6 个 bundle，并做启动自检（同名工具 / 已 patch 的 Storage / 旧 slot id）。
+  `resolveText` 对字符串原样返回，且 `dsh-app-boot` 里 `ctx.locale` 出现 0 次，解析全在 boot 阶段。
+- 迁移（S4–S5）前必须卸载对应的旧 bundle，并做启动自检（同名工具 / 已 patch 的 Storage / 旧 slot id）。
 
 ## 许可
 

@@ -12,10 +12,23 @@ import { CASES } from './support/storage-matrix.mjs'
 import { makeWorld, draftValue, BACKUP_KEY, DRAFT_PREFIX } from './support/fake-storage.mjs'
 import { installDraftGuard } from '../src/client/features/draft-guard.js'
 
-/** Mount the toolbox guard for one world. */
+/**
+ * A GENUINELY separate module instance (HMR / double eval). The query string
+ * gives ESM a distinct cache entry, so this copy has its own `LIVE` WeakMap and
+ * can only recognise the first guard through `Symbol.for('dsh.draft-saver.patch')`.
+ */
+const secondInstance = await import('../src/client/features/draft-guard.js?instance=2')
+
+/** Mount the toolbox guard for one world, from the primary module instance. */
 function install(world, options = {}) {
   const getter = options.getStorage ?? (() => world.localStorage)
   return installDraftGuard(getter, options)
+}
+
+/** Mount from the second module instance, on the same world. */
+function installAgain(world, options = {}) {
+  const getter = options.getStorage ?? (() => world.localStorage)
+  return secondInstance.installDraftGuard(getter, options)
 }
 
 for (const item of CASES) {
@@ -24,7 +37,8 @@ for (const item of CASES) {
     item.run({
       world,
       install: (options) => install(world, options),
-      installAgain: (options) => install(world, options),
+      installAgain: (options) => installAgain(world, options),
+      installOn: (other, options) => install(other, options),
       assert,
       BACKUP_KEY,
       DRAFT_PREFIX,

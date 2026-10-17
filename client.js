@@ -792,6 +792,8 @@
         const parsed = JSON.parse(raw);
         if (!parsed || typeof parsed !== "object") return null;
         if (typeof parsed.raw !== "string" || typeof parsed.key !== "string") return null;
+        if (!String(parsed.key).startsWith(DRAFT_PREFIX)) return null;
+        if (!readDraftValue(parsed.raw).ok) return null;
         return parsed;
       } catch (error) {
         return null;
@@ -848,7 +850,7 @@
     function makeSetItem(invoke) {
       return markPatch(function dshDraftSaverSetItem(key, value) {
         const result = invoke(this, key, value);
-        if (!state.active) return result;
+        if (!state.active || this !== first) return result;
         const name = String(key);
         if (!name.startsWith(DRAFT_PREFIX)) return result;
         try {
@@ -862,7 +864,7 @@
     function makeGetItem(invoke) {
       return markPatch(function dshDraftSaverGetItem(key) {
         const raw = invoke(this, key);
-        if (!state.active) return raw;
+        if (!state.active || this !== first) return raw;
         const name = String(key);
         if (!name.startsWith(DRAFT_PREFIX)) return raw;
         try {
@@ -1101,6 +1103,12 @@
     return function DraftSaverNotice(props) {
       const [snapshot, setSnapshot] = useState(bus.get());
       const [copied, setCopied] = useState("");
+      const copyTimer = useRef(null);
+      useEffect(() => {
+        return () => {
+          if (copyTimer.current) clearTimeout(copyTimer.current);
+        };
+      }, []);
       useEffect(() => {
         const sync = () => setSnapshot(bus.get());
         const off = bus.subscribe(sync);
@@ -1121,7 +1129,8 @@
         copyText2(draft).then((done) => {
           setCopied(done ? "copied" : "failed");
           bus.publish(Object.assign({}, snapshot));
-          setTimeout(() => setCopied(""), 1800);
+          if (copyTimer.current) clearTimeout(copyTimer.current);
+          copyTimer.current = setTimeout(() => setCopied(""), 1800);
         });
       };
       const clear = () => {

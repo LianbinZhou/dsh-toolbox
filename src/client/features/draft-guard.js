@@ -141,6 +141,13 @@ export function installDraftGuard(getStorage, options = {}) {
       const parsed = JSON.parse(raw)
       if (!parsed || typeof parsed !== 'object') return null
       if (typeof parsed.raw !== 'string' || typeof parsed.key !== 'string') return null
+      // P1-1: a record whose shape looks right but whose payload is not a draft
+      // is "no backup at all". Handing it back would make the Harness parse a
+      // non-draft and show an empty composer — the user's real draft would look
+      // deleted. The corrupt record is deliberately LEFT IN PLACE (it may still be
+      // recoverable by hand); the next legitimate write replaces it.
+      if (!String(parsed.key).startsWith(DRAFT_PREFIX)) return null
+      if (!readDraftValue(parsed.raw).ok) return null
       return parsed
     } catch (error) {
       return null
@@ -208,7 +215,11 @@ export function installDraftGuard(getStorage, options = {}) {
     return markPatch(function dshDraftSaverSetItem(key, value) {
       const result = invoke(this, key, value)
       // Constraint 4: a stale wrapper is a transparent forwarder.
-      if (!state.active) return result
+      // P1-2: the wrapper is an ordinary function, so any caller can re-bind its
+      // `this` (`localStorage.setItem.call(sessionStorage, ...)`). The write still
+      // belongs to the receiver, but the mirror does not: only our own storage may
+      // reach the backup, or one Storage would pollute another.
+      if (!state.active || this !== first) return result
       const name = String(key)
       if (!name.startsWith(DRAFT_PREFIX)) return result
       try {
@@ -224,7 +235,7 @@ export function installDraftGuard(getStorage, options = {}) {
   function makeGetItem(invoke) {
     return markPatch(function dshDraftSaverGetItem(key) {
       const raw = invoke(this, key)
-      if (!state.active) return raw
+      if (!state.active || this !== first) return raw
       const name = String(key)
       if (!name.startsWith(DRAFT_PREFIX)) return raw
       try {

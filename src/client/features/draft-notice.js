@@ -11,7 +11,7 @@
  * acting on it restarts the timer.
  */
 
-import { h, useEffect, useState } from '../runtime.js'
+import { h, useEffect, useRef, useState } from '../runtime.js'
 
 export const NS = 'dsh-toolbox.draft-saver'
 /** Composer floating layer: a closed entry there is the normal state. */
@@ -155,6 +155,14 @@ export function createNoticeComponent(bus, t) {
     const [snapshot, setSnapshot] = useState(bus.get())
     /** '' | 'copied' | 'failed' — shown on the copy button for a moment. */
     const [copied, setCopied] = useState('')
+    /** The copy button's reset timer, cleared when the strip unmounts. */
+    const copyTimer = useRef(null)
+
+    useEffect(() => {
+      return () => {
+        if (copyTimer.current) clearTimeout(copyTimer.current)
+      }
+    }, [])
 
     useEffect(() => {
       const sync = () => setSnapshot(bus.get())
@@ -184,7 +192,8 @@ export function createNoticeComponent(bus, t) {
         setCopied(done ? 'copied' : 'failed')
         // Republishing restarts the strip's own retirement timer.
         bus.publish(Object.assign({}, snapshot))
-        setTimeout(() => setCopied(''), 1800)
+        if (copyTimer.current) clearTimeout(copyTimer.current)
+        copyTimer.current = setTimeout(() => setCopied(''), 1800)
       })
     }
 

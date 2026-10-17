@@ -25,6 +25,8 @@ function freshCtx(install, installAgain) {
     world,
     install: (options) => install(world, options),
     installAgain: (options) => installAgain(world, options),
+    /** Mount a SECOND world (used by the multi-shape cases). */
+    installOn: (other, options) => install(other, options),
     assert,
     BACKUP_KEY,
     DRAFT_PREFIX,
@@ -94,6 +96,10 @@ export const CASES = [
       ctx.assert.ok(
         second.reused === true || second.patched === false,
         'the second mount must reuse or refuse; it returned reused=' + second.reused + ' patched=' + second.patched,
+      )
+      ctx.assert.ok(
+        second.reused === true || second.status === 'conflict',
+        'a second module instance cannot see the live guard, so it must be a conflict; status=' + second.status,
       )
       second.dispose()
       const h = ctx.install()
@@ -186,6 +192,37 @@ export const CASES = [
     },
   },
   {
+    id: 'C4',
+    title: 'a detached instance wrapper called on sessionStorage writes no backup',
+    run(ctx) {
+      const notices = []
+      ctx.install({ onRestore: (n) => notices.push(n) })
+      // The wrapper is an ordinary function: any caller can re-bind its `this`.
+      const patchedSet = ctx.world.localStorage.setItem
+      const patchedGet = ctx.world.localStorage.getItem
+
+      patchedSet.call(ctx.world.sessionStorage, DRAFT_KEY, draftValue('cross storage'))
+      ctx.assert.equal(
+        ctx.world.sessionStorage.getItem(DRAFT_KEY),
+        draftValue('cross storage'),
+        'the write still reaches the receiver it was called on',
+      )
+      ctx.assert.equal(
+        ctx.world.localStorage.getItem(BACKUP_KEY),
+        null,
+        'but a detached call must never mirror into the localStorage backup',
+      )
+
+      // Seed a backup that WOULD be returned, then read through a detached call.
+      ctx.world.localStorage.setItem(DRAFT_KEY, draftValue('the newest'))
+      const before = ctx.world.localStorage.getItem(BACKUP_KEY)
+      ctx.assert.ok(before, 'a backup exists for the next assertion')
+      const detachedRead = patchedGet.call(ctx.world.sessionStorage, DRAFT_KEY)
+      ctx.assert.equal(detachedRead, draftValue('cross storage'), 'a detached read answers from its own receiver')
+      ctx.assert.equal(notices.length, 0, 'and it publishes no notice')
+    },
+  },
+  {
     id: 'C3',
     title: 'two worlds are independent',
     run(ctx) {
@@ -249,6 +286,94 @@ export const CASES = [
       const backup = readBackup(ctx.world.localStorage)
       ctx.assert.ok(backup, 'the empty write must be recorded')
       ctx.assert.equal(JSON.parse(backup.raw).draft.text, '', 'the shared draft follows to empty')
+    },
+  },
+  {
+    id: 'D5',
+    title: 'a quota failure keeps its exception semantics and writes no backup',
+    run(ctx) {
+      // The main write throws: the wrapper must not swallow it, must not recurse,
+      // and must not record a backup for a value the store refused.
+      const boom = new Error('QuotaExceededError')
+      const realSet = ctx.world.localStorage.setItem
+      ctx.world.localStorage.setItem = function quotaSet(key, value) {
+        if (String(key).startsWith(ctx.DRAFT_PREFIX)) throw boom
+        return realSet.call(this, key, value)
+      }
+      const h = ctx.install()
+      ctx.assert.throws(() => ctx.world.localStorage.setItem(ctx.DRAFT_KEY, ctx.draftValue('too big')), /QuotaExceededError/)
+      ctx.assert.equal(ctx.world.localStorage.getItem(ctx.BACKUP_KEY), null, 'a refused write leaves no backup')
+      ctx.assert.doesNotThrow(() => h.dispose())
+    },
+  },
+  {
+    id: 'D5b',
+    title: 'a quota failure on the backup only is swallowed',
+    run(ctx) {
+      // The draft write succeeds; the backup write is the one the store refuses.
+      const realSet = ctx.world.localStorage.setItem
+      ctx.world.localStorage.setItem = function quotaOnBackup(key, value) {
+        if (String(key) === ctx.BACKUP_KEY) {
+          const error = new Error('QuotaExceededError')
+          error.name = 'QuotaExceededError'
+          throw error
+        }
+        return realSet.call(this, key, value)
+      }
+      const h = ctx.install()
+      ctx.assert.doesNotThrow(() => ctx.world.localStorage.setItem(ctx.DRAFT_KEY, ctx.draftValue('fits')))
+      ctx.assert.equal(ctx.world.localStorage.getItem(ctx.DRAFT_KEY), ctx.draftValue('fits'), 'the main write still lands')
+      ctx.assert.doesNotThrow(() => h.dispose())
+    },
+  },
+  {
+    id: 'D6',
+    title: 'a corrupt backup never replaces the real draft',
+    run(ctx) {
+      const notices = []
+      // A real draft on disk…
+      ctx.world.localStorage.setItem(DRAFT_KEY, ctx.draftValue('my real draft'))
+      // …and a backup whose SHAPE looks right but whose raw is not a draft.
+      const corrupt = JSON.stringify({ v: 1, key: DRAFT_KEY, raw: 'not-json', chars: 1, preview: 'x' })
+      ctx.world.localStorage.setItem(ctx.BACKUP_KEY, corrupt)
+
+      ctx.install({ onRestore: (n) => notices.push(n) })
+
+      ctx.assert.equal(
+        ctx.world.localStorage.getItem(DRAFT_KEY),
+        ctx.draftValue('my real draft'),
+        'the real draft must survive a corrupt backup',
+      )
+      ctx.assert.equal(notices.length, 0, 'a corrupt backup must not raise a notice')
+      ctx.assert.equal(
+        ctx.world.localStorage.getItem(ctx.BACKUP_KEY),
+        corrupt,
+        'the corrupt record is left in place for manual recovery, not deleted',
+      )
+    },
+  },
+  {
+    id: 'D6b',
+    title: 'every corrupt backup shape is treated as "no backup"',
+    run(ctx) {
+      const shapes = [
+        '{{{ this is not json', // the whole record is unparsable
+        JSON.stringify({ v: 1, key: DRAFT_KEY }), // no raw
+        JSON.stringify({ v: 1, raw: ctx.draftValue('x') }), // no key
+        JSON.stringify({ v: 1, key: DRAFT_KEY, raw: JSON.stringify({ draft: 'not an object nor string' }) }), // raw parses, wrong shape
+        JSON.stringify({ v: 1, key: 'some.other.key', raw: ctx.draftValue('elsewhere') }), // not a draft key
+      ]
+      for (const shape of shapes) {
+        const world = makeWorld()
+        world.localStorage.setItem(DRAFT_KEY, draftValue('survives'))
+        world.localStorage.setItem(BACKUP_KEY, shape)
+        ctx.installOn(world)
+        ctx.assert.equal(
+          world.localStorage.getItem(DRAFT_KEY),
+          draftValue('survives'),
+          'shape must not break the draft: ' + shape.slice(0, 40),
+        )
+      }
     },
   },
   {
