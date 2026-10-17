@@ -315,12 +315,44 @@ export function install(ctx) {
     console.warn('[dsh-toolbox] session_search: the tools service is unavailable')
     return () => {}
   }
-  const sessionQuery = serviceOf(ctx, 'sessionQuery')
-  if (!sessionQuery) {
-    console.warn('[dsh-toolbox] session_search: sessionQuery is unavailable in this profile')
+  const immediate = serviceOf(ctx, 'sessionQuery')
+  if (immediate) return build(ctx, immediate)
+
+  // rc.2 起 sessionQuery 可能比本插件晚到。以前这里取一次就放弃，工具会永久装不上；
+  // 现在等它出现再注册。
+  if (typeof ctx.inject !== 'function') {
+    console.warn('[dsh-toolbox] session_search: sessionQuery is unavailable in this profile（且没有 ctx.inject，无法等待）')
     return () => {}
   }
+  let offTool = null
+  let stopWait = null
+  try {
+    stopWait = ctx.inject(['sessionQuery'], (scoped) => {
+      if (offTool !== null) return
+      const late = serviceOf(scoped || ctx, 'sessionQuery') || serviceOf(ctx, 'sessionQuery')
+      if (!late) return
+      offTool = build(ctx, late)
+      console.info('[dsh-toolbox] session_search 装上（sessionQuery 晚到）')
+    })
+  } catch (error) {
+    console.warn('[dsh-toolbox] session_search: 等待 sessionQuery 失败 ' + (error && error.message))
+    return () => {}
+  }
+  return () => {
+    try {
+      if (offTool !== null) offTool()
+    } catch (error) {
+      /* 卸载失败不阻塞 */
+    }
+    try {
+      if (typeof stopWait === 'function') stopWait()
+    } catch (error) {
+      /* 同上 */
+    }
+  }
+}
 
+function build(ctx, sessionQuery) {
   return ctx.tools.register({
     name: 'session_search',
     description:

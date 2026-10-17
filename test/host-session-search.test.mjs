@@ -81,3 +81,24 @@ test('a missing sessionQuery degrades to a no-op instead of a broken tool', () =
   assert.equal(warnings.length, 1)
   assert.match(warnings[0], /sessionQuery is unavailable/)
 })
+
+test('a LATE sessionQuery is awaited instead of given up on (rc.2 timing)', () => {
+  const tools = toolsStub()
+  let deliver = null
+  const ctx = {
+    tools,
+    get: () => undefined,
+    inject: (deps, cb) => {
+      deliver = cb
+      return () => {}
+    },
+  }
+  const disposer = install(ctx)
+  assert.equal(tools.registered.length, 0, '还没到之前不能注册')
+  assert.equal(typeof disposer, 'function')
+
+  // 服务晚到：作用域里能拿到 sessionQuery
+  deliver({ get: (name) => (name === 'sessionQuery' ? {} : undefined) })
+  assert.equal(tools.registered.length, 1, '服务到了就要装上')
+  assert.equal(tools.registered[0].name, 'session_search')
+})
