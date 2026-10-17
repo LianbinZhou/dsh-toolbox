@@ -22,6 +22,7 @@ export const PHASES = ['deleting', 'trashed', 'cleaned', 'done']
 export function createMemoryJournal(initial = []) {
   let entries = initial.map((entry) => ({ ...entry }))
   return {
+    health: () => ({ corrupt: false }),
     read() {
       return entries.map((entry) => ({ ...entry }))
     },
@@ -38,14 +39,24 @@ export function createMemoryJournal(initial = []) {
  */
 export function createFileJournal(dir) {
   const file = join(dir, 'archive-journal.json')
-  const temp = join(dir, 'archive-journal.json.tmp')
+  // A unique temp name keeps two instances from overwriting each other's write.\n  const temp = join(dir, 'archive-journal.json.' + process.pid + '.tmp')
+
+  /** Set by read(); a corrupt file must NOT look like an empty one. */
+  let corrupt = false
 
   function read() {
     try {
       const raw = readFileSync(file, 'utf8')
       const parsed = JSON.parse(raw)
-      return Array.isArray(parsed?.entries) ? parsed.entries : []
+      if (!Array.isArray(parsed?.entries)) {
+        corrupt = true
+        return []
+      }
+      corrupt = false
+      return parsed.entries
     } catch (error) {
+      // Only a MISSING file is benign; anything else is a corrupt journal.
+      corrupt = !(error && error.code === 'ENOENT')
       // A missing or corrupt journal is treated as empty: the service then falls
       // back to "no pending work", which is the safe direction (never invent a
       // trash entry that does not exist).
@@ -70,5 +81,5 @@ export function createFileJournal(dir) {
     }
   }
 
-  return { read, write, path: file }
+  return {\n    read,\n    write,\n    // Ask the file, not a stale flag: callers check health BEFORE acting.\n    health() {\n      read()\n      return { corrupt }\n    },\n    path: file,\n  }
 }

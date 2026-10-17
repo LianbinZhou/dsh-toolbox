@@ -23,6 +23,10 @@ import { isInside } from './paths.js'
  * @param {string} trashRoot - the boundary it must stay inside
  */
 export function removeTrashTree(dir, trashRoot) {
+  // T10: a link AT THE TOP must be refused before realpath resolves it, or the
+  // removal follows the link and deletes its target.
+  const top = lstatSync(dir)
+  if (top.isSymbolicLink()) throw new Error('refusing to remove a link')
   const rootReal = realpathSync(trashRoot)
   const real = realpathSync(dir)
   if (real === rootReal) throw new Error('refusing to remove the trash root itself')
@@ -66,6 +70,11 @@ export function createTrashGc({
   now = () => Date.now(),
 } = {}) {
   function run() {
+    // P0-3: a corrupt journal means we cannot tell a protected entry from an
+    // orphan. Deleting anything here could destroy the only copy of user files.
+    if (journal && typeof journal.health === 'function' && journal.health().corrupt) {
+      return { purged: [], kept: -1, protected: -1, corrupt: true, overCapacity: false }
+    }
     const at = now()
     const entries = (typeof listTrash === 'function' ? listTrash() : []).map((entry) => ({
       path: entry.path,
@@ -113,7 +122,9 @@ export function createTrashGc({
       remaining -= 1
     }
 
-    return { purged, kept: remaining, protected: protectedCount }
+    // P0-2: a trash that is still over its cap must SAY so; silence here is how
+    // a failing bookkeeping step fills the disk.
+    return { purged, kept: remaining, protected: protectedCount, corrupt: false, overCapacity: remaining > maxEntries }
   }
 
   return { run }

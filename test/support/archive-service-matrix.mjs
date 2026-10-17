@@ -119,6 +119,7 @@ export function makeWorld(options = {}) {
     },
     exists: (path) => [...dirs.values()].includes(path) || trash.has(path),
     trashRoot: () => TRASH,
+    maxProtected: options.maxProtected,
     sameVolume: () => options.sameVolume !== false,
     unarchive: (id) => {
       calls.unarchive.push(id)
@@ -136,7 +137,7 @@ export function makeWorld(options = {}) {
       failIf('cache')
     },
     journal: { read: () => entries.map((e) => ({ ...e })), write: writeJournal },
-    nonce: () => 'nonce' + (counter += 1) + '-abcdef',
+    nonce: () => 'nonce-' + (counter += 1) + '-abcdef0123456789',
     beforeStep: async (step, id) => {
       if (pauseAt.step === step && pauseAt.gate) await pauseAt.gate.promise
     },

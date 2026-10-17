@@ -140,12 +140,16 @@ export function createArchiveService(deps) {
     try {
       deps.removeTree(entry.trashPath)
     } catch (error) {
-      return { ok: true, removedDir: true, reason: 'trash-pending', warning: 'deleted with warnings' }
+      // A trash entry that is already gone is success, not a permanent pending.
+      if (!(error && error.code === 'ENOENT')) {
+        return { ok: true, removedDir: true, reason: 'trash-pending', warning: 'deleted with warnings' }
+      }
     }
 
-    deps.journal.write(
-      deps.journal.read().map((current) => (current.id === id ? { ...current, phase: 'done', at: Date.now() } : current)),
-    )
+    // P0-1: a finished entry is REMOVED from the journal. Keeping a done
+    // tombstone per deleted session makes the file grow without bound, and every
+    // read/write parses and rewrites all of it.
+    deps.journal.write(withoutEntry(deps.journal, id))
     return { ok: true, removedDir: true }
   }
 
@@ -153,6 +157,10 @@ export function createArchiveService(deps) {
     if (!isSafeSessionId(id)) return { ok: false, status: 400, reason: REASONS.INVALID_ID }
 
     return withLock(id, async () => {
+      // P0-3: a corrupt journal cannot be trusted to say what is in the trash.
+      if (typeof deps.journal.health === 'function' && deps.journal.health().corrupt) {
+        return { ok: false, status: 409, reason: 'journal-corrupt' }
+      }
       const existing = findEntry(deps.journal, id)
       if (existing && existing.phase === 'done') {
         return { ok: false, status: 409, reason: REASONS.ALREADY_DELETED }
@@ -203,8 +211,21 @@ export function createArchiveService(deps) {
         return { ok: false, status: 409, reason: REASONS.CROSS_VOLUME }
       }
 
+      // P0-2: a restorable entry is never evicted, so a full trash must stop NEW
+      // deletes instead of quietly growing until the disk is gone.
+      const protectedCount = deps.journal.read().filter((entry) => entry.phase === 'trashed' || entry.phase === 'cleaned').length
+      const maxProtected = Number.isFinite(deps.maxProtected) ? deps.maxProtected : 200
+      if (protectedCount >= maxProtected) {
+        return { ok: false, status: 409, reason: 'trash-full' }
+      }
+
       // D2/T4: the claim is durable and written BEFORE the move.
-      const nonce = deps.nonce()
+      const nonce = String(deps.nonce())
+      // P0-7: a nonce is used as a path segment; anything but an opaque token can
+      // walk out of the trash root.
+      if (!/^[A-Za-z0-9_-]{16,64}$/.test(nonce)) {
+        return { ok: false, status: 500, reason: REASONS.CLAIM_FAILED }
+      }
       const claim = {
         id,
         nonce,
@@ -273,14 +294,18 @@ export function createArchiveService(deps) {
         // The trash entry is the only evidence that tells them apart.
         const moved = typeof deps.exists === 'function' && deps.exists(entry.trashPath)
         if (moved) {
-          deps.journal.write(
-            deps.journal.read().map((current) =>
-              current.id === entry.id ? { ...current, phase: 'trashed', at: Date.now() } : current,
-            ),
-          )
-          const result = await finish(entry.id)
-          if (result.ok && !result.warning) healed.push(entry.id)
-          else pending.push(entry.id)
+          // P0-5: the adoption touches the journal and the trash, so it belongs
+          // under the same per-id lock as delete/restore.
+          await withLock(entry.id, async () => {
+            deps.journal.write(
+              deps.journal.read().map((current) =>
+                current.id === entry.id ? { ...current, phase: 'trashed', at: Date.now() } : current,
+              ),
+            )
+            const result = await finish(entry.id)
+            if (result.ok && !result.warning) healed.push(entry.id)
+            else pending.push(entry.id)
+          })
           continue
         }
         await withLock(entry.id, async () => {
