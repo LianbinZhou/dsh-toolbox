@@ -55,7 +55,7 @@ test('crash 2 · the directory moved but the journal was not updated: adopt and 
 
   assert.deepEqual(result.pending, [], 'the restart finishes the job')
   assert.deepEqual(service.pendingCleanup(), [], 'no entry is left behind')
-  assert.equal(world.trashCount(), 0, 'the trash entry is purged after the cleanup')
+  assert.equal(world.trashCount(), 1, '删除只移入垃圾箱：保留期没到之前不许物理清空')
   assert.equal(world.isArchived(ID_A), false, 'the archive marker is cleared')
   assert.equal(world.calls.unarchive.length, 1, 'the bookkeeping ran exactly once')
 })
@@ -69,7 +69,7 @@ test('crash 3 · trashed, unarchive not run: the restart finishes the bookkeepin
   await service.heal()
 
   assert.equal(world.isArchived(ID_A), false, 'the marker is cleared by the restart')
-  assert.equal(world.trashCount(), 0, 'and the trash is purged')
+  assert.equal(world.trashCount(), 1, '仍在垃圾箱里等保留期')
   assert.deepEqual(service.pendingCleanup(), [])
 })
 
@@ -81,7 +81,7 @@ test('crash 4 · cleaned, purge not run: the restart only purges, no ghost', asy
   const service = createArchiveService(deps)
   await service.heal()
 
-  assert.equal(world.trashCount(), 0, 'the leftovers are purged')
+  assert.equal(world.trashCount(), 1, '仍在垃圾箱里等保留期')
   assert.deepEqual(service.pendingCleanup(), [], 'nothing pending')
   assert.equal(world.isArchived(ID_B), true, 'an unrelated session is untouched')
   assert.equal(world.dirExists(ID_B), true)

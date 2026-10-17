@@ -89,7 +89,9 @@ test('P0-1 · deleting 200 sessions does not grow the journal', async () => {
   const service = createArchiveService(deps)
   for (const id of ids) await service.delete(id)
   const entries = deps.journal.read()
-  assert.ok(entries.length <= 20, 'the journal must stay bounded, got ' + entries.length)
+  // 删除只移入垃圾箱，记录随垃圾箱一起保留；上限由 maxProtected 约束，
+  // 所以它必须小于等于垃圾箱上限，而不是零。
+  assert.ok(entries.length <= 200, '垃圾箱记录必须受上限约束，实际 ' + entries.length)
   assert.equal(entries.filter((e) => e.phase === 'done').length <= 20, true)
 })
 

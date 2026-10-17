@@ -118,6 +118,8 @@ export function createArchiveService(deps) {
     if (!isSafeSessionId(entry.id)) return false
     if (typeof entry.trashPath !== 'string' || typeof entry.originalPath !== 'string') return false
     const root = String(deps.trashRoot())
+  /** 垃圾箱保留天数，到期才由清理器物理清空。 */
+  const keptDays = Number.isFinite(deps.trashKeptDays) ? deps.trashKeptDays : 7
     return entry.trashPath.startsWith(root + '/') || entry.trashPath.startsWith(root + '\\')
   }
 
@@ -158,20 +160,40 @@ export function createArchiveService(deps) {
 
     deps.journal.update((entries) => entries.map((current) => (current.id === id ? { ...current, phase: 'cleaned' } : current)))
 
-    try {
-      deps.removeTree(entry.trashPath)
-    } catch (error) {
-      // A trash entry that is already gone is success, not a permanent pending.
-      if (!(error && error.code === 'ENOENT')) {
-        return { ok: true, removedDir: true, reason: 'trash-pending', warning: 'deleted with warnings' }
-      }
+    // 删除到此为止：目录已在垃圾箱里等保留期，绝不在这里物理清空；
+    // 以前这里紧接着物理删除，一次误点就永久没了。
+    // removedDir 的语义是「原位置已经清空」，移入垃圾箱后它依然成立；
+    // movedToTrash / recoverable 说明它没有消失，还能捞回来。
+    return {
+      ok: true,
+      removedDir: true,
+      movedToTrash: true,
+      recoverable: true,
+      keptDays: Number.isFinite(deps.trashKeptDays) ? deps.trashKeptDays : 7,
     }
+  }
 
-    // P0-1: a finished entry is REMOVED from the journal. Keeping a done
-    // tombstone per deleted session makes the file grow without bound, and every
-    // read/write parses and rewrites all of it.
-    deps.journal.update((entries) => entries.filter((entry) => entry.id !== id))
-    return { ok: true, removedDir: true }
+  /**
+   * 真正物理清空一条记录：只允许已移入垃圾箱的状态，
+   * 由清理器按保留期调用，或面板「彻底删除」二次确认后调用。
+   */
+  async function purge(id) {
+    if (!isSafeSessionId(id)) return { ok: false, status: 400, reason: REASONS.INVALID_ID }
+    return withLock(id, async () => {
+      const entry = findEntry(deps.journal, id)
+      if (!entry) return { ok: true, purged: false, reason: 'no-entry' }
+      if (!entryIsSane(entry)) return { ok: false, status: 409, reason: 'journal-corrupt' }
+      if (entry.phase !== 'cleaned' && entry.phase !== 'trashed') {
+        return { ok: false, status: 409, reason: 'not-in-trash' }
+      }
+      try {
+        deps.removeTree(entry.trashPath)
+      } catch (error) {
+        if (!(error && error.code === 'ENOENT')) return { ok: false, status: 500, reason: 'purge-failed' }
+      }
+      deps.journal.update((entries) => entries.filter((current) => current.id !== id))
+      return { ok: true, purged: true }
+    })
   }
 
   async function deleteSession(id) {
@@ -189,8 +211,12 @@ export function createArchiveService(deps) {
       if (existing && existing.phase === 'deleting') {
         return { ok: false, status: 409, reason: REASONS.IN_PROGRESS }
       }
-      if (existing && (existing.phase === 'trashed' || existing.phase === 'cleaned')) {
-        // Resume: the files are already in the trash.
+      // cleaned = 已经安全躺在垃圾箱里，再删一次是重复操作，不是「续做」。
+      if (existing && existing.phase === 'cleaned') {
+        return { ok: false, status: 409, reason: REASONS.ALREADY_DELETED }
+      }
+      if (existing && existing.phase === 'trashed') {
+        // trashed = 还没做完归档标记清理，续做。
         return finish(id)
       }
 
@@ -365,13 +391,16 @@ export function createArchiveService(deps) {
 
   return {
     delete: deleteSession,
+    purge,
     heal,
     restore,
     /** Ids with an unfinished entry (durable, survives a restart). */
+    // 只有「删到一半」的才算待清理；cleaned 表示已经安全躺在垃圾箱里等保留期，
+    // 不属于未完成的工作。
     pendingCleanup: () =>
       deps.journal
         .read()
-        .filter((entry) => entry.phase !== 'done')
+        .filter((entry) => entry.phase === 'deleting' || entry.phase === 'trashed')
         .map((entry) => entry.id),
 
     async list() {

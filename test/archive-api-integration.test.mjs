@@ -110,7 +110,9 @@ test('api · delete through HTTP really moves the directory into the trash', asy
     const body = await res.json()
     assert.equal(res.status, 200, 'service said: ' + JSON.stringify(body))
     assert.equal(existsSync(join(world.projectRoot, ID)), false, 'the session directory left its place')
-    assert.equal(world.built.deps.journal.read().length, 0, 'a finished entry is pruned')
+    const journalNow = world.built.deps.journal.read()
+    assert.equal(journalNow.length, 1, '记录留在 journal 里，垃圾箱才能列出来')
+    assert.equal(journalNow[0].phase, 'cleaned', '阶段是「已进垃圾箱」')
   } finally {
     await close(world)
   }

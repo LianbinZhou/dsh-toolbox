@@ -321,7 +321,7 @@ export const SERVICE_CASES = [
       assert.ok(moved, 'the directory was moved')
       assert.equal(moved.to.includes(ID_A), false, 'the path must not contain the session id')
       assert.match(moved.to, /nonce/)
-      assert.equal(world.trashCount(), 0, 'and it is purged once the bookkeeping succeeded')
+      assert.equal(world.trashCount(), 1, 'and it is purged once the bookkeeping succeeded')
     },
   },
   {
@@ -337,8 +337,10 @@ export const SERVICE_CASES = [
       assert.match(phases, /cleaned/)
       // P0-1: a finished entry is PRUNED (no done tombstone), otherwise the
       // journal grows by one record per deleted session forever.
-      assert.doesNotMatch(phases, /done/, 'a finished entry must be removed, not kept')
-      assert.deepEqual(world.journalEntries(), [], 'nothing is left behind')
+      assert.doesNotMatch(phases, /done/, '不再写 done 墓碑')
+      const kept = world.journalEntries()
+        assert.equal(kept.length, 1, '垃圾箱里要留下一条记录')
+        assert.equal(kept[0].phase, 'cleaned')
     },
   },
   {

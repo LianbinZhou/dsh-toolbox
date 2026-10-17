@@ -17,6 +17,43 @@ import { createArchiveClient } from './archive-client.js'
 import { createArchivePanel } from './archive-panel-model.js'
 import { cacheSwitches, watchSwitches } from '../switches.js'
 
+/**
+ * Stylesheet for the archive panel. Injected once per page.
+ *
+ * Every colour is a host theme token, so light and dark both work and nothing
+ * is hard-coded here. Colours used by the previous inline style (`#b3261e`)
+ * fought the theme in dark mode, which is why the buttons looked pasted-on.
+ */
+const ARCHIVE_CSS = `
+.dsh-toolbox-archive{display:flex;flex-direction:column;height:100%;min-height:0;padding:16px 18px;gap:10px;color:var(--dsw-alias-label-primary);font-size:13px}
+.dsh-toolbox-archive header{flex:none;font-size:15px;font-weight:650;display:flex;align-items:baseline;gap:8px}
+.dsh-toolbox-archive-count{font-size:12px;font-weight:400;color:var(--dsw-alias-label-secondary);opacity:.75}
+.dsh-toolbox-archive-note{flex:none;margin:0;color:var(--dsw-alias-label-secondary);opacity:.85;font-size:12px}
+.dsh-toolbox-archive-empty{flex:none;margin:0;padding:28px 12px;text-align:center;color:var(--dsw-alias-label-secondary);opacity:.7}
+.dsh-toolbox-archive ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px;flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;scrollbar-width:thin}
+.dsh-toolbox-archive li{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;transition:background .15s ease}
+.dsh-toolbox-archive li:hover{background:var(--dsw-alias-bg-layer-2)}
+.dsh-toolbox-archive-title{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:2px}
+.dsh-toolbox-archive-title strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500}
+.dsh-toolbox-archive-id{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-secondary);opacity:.6;font-size:11px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.dsh-toolbox-archive button{flex:none;font-family:inherit;font-size:12px;line-height:1;padding:5px 11px;border-radius:7px;cursor:pointer;border:1px solid transparent;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-secondary);transition:background .15s ease,color .15s ease,border-color .15s ease}
+.dsh-toolbox-archive button:hover:not(:disabled){background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-border-l2)}
+.dsh-toolbox-archive button:disabled{opacity:.5;cursor:default}
+.dsh-toolbox-archive button.danger{color:var(--dsw-alias-state-error-primary,#e5484d)}
+.dsh-toolbox-archive button.danger:hover:not(:disabled){background:color-mix(in srgb,var(--dsw-alias-state-error-primary,#e5484d) 15%,transparent);border-color:color-mix(in srgb,var(--dsw-alias-state-error-primary,#e5484d) 32%,transparent)}
+`
+
+/** Install the panel stylesheet exactly once per page. */
+export function ensureStyles() {
+  if (typeof document === 'undefined') return
+  if (document.getElementById('dsh-toolbox-archive-css') !== null) return
+  const style = document.createElement('style')
+  style.id = 'dsh-toolbox-archive-css'
+  style.dataset.dshToolbox = 'archive'
+  style.textContent = ARCHIVE_CSS
+  document.head.appendChild(style)
+}
+
 export const PANEL_ID = 'dsh-toolbox#archive'
 export const MAIN_SLOT = 'main'
 export const PANEL_SLOT = 'sidebar.panellist'
@@ -47,6 +84,8 @@ export function mount(ctx, env) {
     }, {}),
   )
 
+  ensureStyles()
+
   const client = createArchiveClient({ fetchImpl: (url, init) => fetch(url, init) })
   const panel = createArchivePanel({ client, isEnabled: archiveApiEnabled })
 
@@ -75,9 +114,12 @@ export function mount(ctx, env) {
     const live = () => true
 
     return h('div', { class: 'dsh-toolbox-archive' }, [
-      h('header', null, [h('strong', null, '历史归档')]),
+      h('header', null, [
+        h('strong', null, '历史归档'),
+        h('span', { class: 'dsh-toolbox-archive-count' }, view.rows.length === 0 ? '共 0 条' : `共 ${view.rows.length} 条`),
+      ]),
       view.message ? h('p', { class: 'dsh-toolbox-archive-note' }, view.message) : null,
-      view.rows.length === 0 && !view.message ? h('p', null, '没有归档会话') : null,
+      view.rows.length === 0 && !view.message ? h('p', { class: 'dsh-toolbox-archive-empty' }, '没有归档会话') : null,
       h(
         'ul',
         null,
@@ -92,11 +134,20 @@ export function mount(ctx, env) {
               'button',
               {
                 type: 'button',
+                class: 'danger',
                 disabled: busy || !view.canDelete,
-                // Destructive actions are red. This is the browser default for
-                // danger, so no stylesheet has to be injected.
-                style: { color: '#b3261e', borderColor: '#b3261e', fontWeight: '600' },
-                onClick: run(() => panel.remove(row.id)),
+                onClick: () => {
+                  // 二次确认：删除会真的把会话目录挪进回收站，不能撤销。
+                  const name = row.label || row.id
+                  let yes = false
+                  try {
+                    yes = window.confirm(`确定要彻底删除这个会话吗？\n\n「${name}」\n\n删除后无法恢复。`)
+                  } catch (error) {
+                    yes = false
+                  }
+                  if (!yes) return
+                  run(() => panel.remove(row.id))()
+                },
               },
               '删除',
             ),
