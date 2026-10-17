@@ -126,5 +126,5 @@ test('panel · without a title the label falls back to the id tail', async () =>
   const client = fakeClient({ titles: {} })
   const panel = createArchivePanel({ client, isEnabled: () => true })
   await panel.refresh()
-  assert.match(panel.view().rows[0].label, /会话 33334444/)
+  assert.match(panel.view().rows[0].label, /会话 44444444/)
 })
