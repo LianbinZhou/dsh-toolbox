@@ -31,10 +31,32 @@ export function createSessionAdapter({ registry, sessions, sessionsRoot } = {}) 
   if (!registry || typeof registry !== 'object') return null
   if (typeof registry.unarchiveSession !== 'function') return null
 
+  /**
+   * The archived set, read TOLERANTLY.
+   *
+   * The same field is an array on one face, a function on another, and an
+   * observable on a third. Reading only the array shape silently produced [] —
+   * which looked exactly like "the user has no archived sessions".
+   */
   const readArchived = () => {
-    const ids = registry.archivedSessionIds
+    let ids
+    try {
+      ids = registry.archivedSessionIds
+      if (typeof ids === 'function') ids = ids.call(registry)
+      if (ids && typeof ids.getSnapshot === 'function') ids = ids.getSnapshot()
+      else if (ids && typeof ids.get === 'function') ids = ids.get()
+      else if (ids && typeof ids.current === 'function') ids = ids.current()
+    } catch (error) {
+      console.warn('[dsh-toolbox] reading archivedSessionIds failed', error)
+      return []
+    }
     if (ids === undefined || ids === null) return []
-    return Array.from(ids).map(String)
+    let list
+    if (Array.isArray(ids)) list = ids
+    else if (ids instanceof Set) list = [...ids]
+    else if (typeof ids === 'object' && typeof ids[Symbol.iterator] === 'function') list = [...ids]
+    else return []
+    return list.map(String)
   }
 
   const isLive = (id) => {

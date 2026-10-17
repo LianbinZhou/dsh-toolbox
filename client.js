@@ -2178,24 +2178,28 @@
     }
     function SidebarRow() {
       return h(
-        "button",
+        "svg",
         {
-          type: "button",
-          class: "dsh-toolbox-archive-row",
-          onClick: () => {
-            try {
-              ctx.layout.selectPanel(PANEL_ID);
-            } catch (error) {
-              console.error("[dsh-toolbox] selecting the archive panel failed", error);
-            }
-          }
+          viewBox: "0 0 16 16",
+          width: 16,
+          height: 16,
+          fill: "none",
+          stroke: "currentColor",
+          strokeWidth: 1.3,
+          strokeLinecap: "round",
+          strokeLinejoin: "round",
+          "aria-hidden": true,
+          style: { display: "block" }
         },
-        "历史归档"
+        [
+          h("path", { key: "box", d: "M2.5 5.5h11M4 5.5V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V5.5M5.5 5.5V3a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v2.5M6 9h4" })
+        ]
       );
     }
     const mainReg = ctx.slots.register({ name: MAIN_SLOT, key: PANEL_ID }, ArchiveView);
     console.info("[dsh-toolbox] registered main panel, disposer =", typeof mainReg);
     if (typeof mainReg === "function") env.track(mainReg);
+    const rowReg = ctx.slots.inject(PANEL_SLOT2, () => ctx.slots.register({ name: PANEL_SLOT2, id: PANEL_ID, order: 200, label: "历史归档" }, SidebarRow));
     console.info("[dsh-toolbox] registered panellist row, disposer =", typeof rowReg);
     if (typeof rowReg === "function") env.track(rowReg);
     const readEntries = () => {

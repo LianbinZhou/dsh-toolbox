@@ -67,3 +67,16 @@ test('adapter · is usable only when every required member exists', () => {
   assert.equal(adapterIsUsable(good), true)
   assert.equal(adapterIsUsable({ readArchived() {}, isLive() {}, probe() {} }), false, 'no unarchive => not usable')
 })
+
+
+test('adapter · a FUNCTION form of the getter is read too', () => {
+  const reg = registry({ archivedSessionIds: () => [ID] })
+  const adapter = createSessionAdapter({ registry: reg, sessions: {}, sessionsRoot: 'C:/tmp/sessions' })
+  assert.deepEqual(adapter.readArchived(), [ID], 'a method form must not silently read as empty')
+})
+
+test('adapter · an OBSERVABLE form of the getter is read too', () => {
+  const reg = registry({ archivedSessionIds: { getSnapshot: () => new Set([ID]) } })
+  const adapter = createSessionAdapter({ registry: reg, sessions: {}, sessionsRoot: 'C:/tmp/sessions' })
+  assert.deepEqual(adapter.readArchived(), [ID])
+})
