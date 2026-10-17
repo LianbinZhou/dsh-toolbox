@@ -16,8 +16,9 @@
  *     refuses instead of removing something that may be open.
  */
 
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { homedir } from 'node:os'
 import { dshHome, sessionsRootFor } from './paths.js'
 import { createFsProbe } from './probe.js'
 
@@ -65,16 +66,55 @@ export function createSessionAdapter({ registry, sessions, sessionsRoot, storage
     return list.map(String)
   }
 
-  /** The persisted archive set, used only when the registry seam answers empty. */
-  function readArchivedFromStorage() {
-    try {
-      const file = join(dshHome(), 'storages', 'workspace.json')
-      const unit = JSON.parse(readFileSync(file, 'utf8'))
-      const ids = unit && unit.global && unit.global.archivedSessionIds
-      return Array.isArray(ids) ? ids : []
-    } catch (error) {
-      return []
+  /**
+   * The persisted archive set, used only when the registry seam answers empty.
+   *
+   * The home directory can resolve differently inside the host process, so every
+   * plausible root is tried and the one that worked is logged once.
+   */
+  let storageRoot = null
+  function candidateHomes() {
+    const out = []
+    const push = (value) => {
+      if (typeof value === 'string' && value.length > 0 && !out.includes(value)) out.push(value)
     }
+    try {
+      push(process.env.DSH_HOME)
+    } catch (error) {
+      /* ignore */
+    }
+    try {
+      push(dshHome())
+    } catch (error) {
+      /* ignore */
+    }
+    try {
+      push(join(homedir(), '.dsh'))
+    } catch (error) {
+      /* ignore */
+    }
+    return out
+  }
+
+  function readArchivedFromStorage() {
+    for (const home of candidateHomes()) {
+      const file = join(home, 'storages', 'workspace.json')
+      if (!existsSync(file)) continue
+      try {
+        const unit = JSON.parse(readFileSync(file, 'utf8'))
+        const ids = unit && unit.global && unit.global.archivedSessionIds
+        if (Array.isArray(ids)) {
+          if (storageRoot !== file) {
+            storageRoot = file
+            console.info('[dsh-toolbox] archived ids read from ' + file + ' (' + ids.length + ')')
+          }
+          return ids
+        }
+      } catch (error) {
+        console.warn('[dsh-toolbox] reading ' + file + ' failed: ' + (error && error.message))
+      }
+    }
+    return []
   }
 
   const isLive = (id) => {
