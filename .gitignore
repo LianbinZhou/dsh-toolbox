@@ -3,3 +3,6 @@ npm-debug.log*
 *.tgz
 .DS_Store
 Thumbs.db
+
+# Windows shortcuts (machine-specific absolute paths)
+*.lnk
