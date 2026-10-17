@@ -9,9 +9,9 @@
  * @module dsh-toolbox/host/features/archive/paths (migrated verbatim from dsh-archive-manager, S4-b)
  */
 
-import { existsSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 
 /**
  * Resolve the harness home directory: `$DSH_HOME` wins (relative values are
@@ -46,53 +46,44 @@ function sessionsRootFor(home) {
  * @returns the `session-`-prefixed form.
  */
 function canonicalSessionId(id) {
+	if (typeof id !== "string" || id.length === 0) return "";
 	return id.startsWith("session-") ? id : `session-${id}`;
 }
 
 /**
- * Reject anything that could escape the sessions root by construction. Ids are
- * only ever matched against real directory names, but a guard keeps a malformed
- * request from ever reaching the filesystem walk.
+ * The one id shape this module accepts (R3: allowlist, not denylist).
  *
- * S4-b hardening: besides separators and `..`, this refuses the characters
- * Windows reserves (`" * : < > | ?`), control codes, and a trailing dot or
- * space (Windows strips those silently, so `session-x.` would otherwise name
- * the same directory as `session-x`).
+ * A DSH session segment is a uuid, optionally `session-` prefixed. Anything
+ * else — a Windows device name, an internal space, a percent-encoded traversal,
+ * a unicode bidi control — is rejected here rather than reasoned about later.
+ */
+const SAFE_SESSION_ID = /^(?:session-)?[0-9a-fA-F][0-9a-fA-F-]{7,63}$/;
+
+/**
+ * Reject anything that is not a plausible session segment.
+ *
+ * S4-b hardening: an ALLOWLIST (uuid hex and dashes, optional `session-`
+ * prefix). The earlier denylist let through Windows device names (`CON`,
+ * `NUL`), internal spaces, `%2e%2e` and unicode separators; none of those can
+ * now reach the filesystem walk.
  * @param id - candidate session id from the request body.
  */
 function isSafeSessionId(id) {
-	return (
-		typeof id === "string" &&
-		id.length > 0 &&
-		id.length <= 256 &&
-		id !== "." &&
-		!id.includes("/") &&
-		!id.includes("\\") &&
-		!id.includes("..") &&
-		!RESERVED_IN_ID.test(id) &&
-		!id.endsWith(".") &&
-		!id.endsWith(" ")
-	);
+	return typeof id === "string" && SAFE_SESSION_ID.test(id);
 }
-
-/** Characters Windows reserves in a file name, plus every control code. */
-const RESERVED_IN_ID = /[\u0000-\u001f<>:"|?*]/;
 
 /**
  * A cache key that is safe to join onto the projection-cache directory, or null.
  *
- * `scrubProjcache` turns ids into file names. Without this, a malformed id such
- * as `../../outside/marker` unlinks a file OUTSIDE the harness home. The delete
- * route validates its id first, but an exported best-effort helper must not
- * depend on its caller for that.
+ * Same allowlist as {@link isSafeSessionId}: `scrubProjcache` turns ids into file
+ * names, and without this a malformed id such as `../../outside/marker` unlinks a
+ * file OUTSIDE the harness home. An exported best-effort helper must not depend
+ * on its caller for that.
  * @param id - candidate session id.
  * @returns the id, or null when it may not be used as a file name.
  */
 function safeCacheKey(id) {
-	if (typeof id !== "string" || id.length === 0 || id.length > 256) return null;
-	if (id === "." || id.includes("/") || id.includes("\\") || id.includes("..")) return null;
-	if (RESERVED_IN_ID.test(id) || id.endsWith(".") || id.endsWith(" ")) return null;
-	return id;
+	return isSafeSessionId(id) ? id : null;
 }
 
 /** True when `child` is `root` itself or lies underneath it (lexical). */
@@ -138,6 +129,9 @@ function findSessionDir(sessionsRoot, sessionId) {
 			if (!wanted.has(segment)) continue;
 			const dirPath = join(projectPath, segment);
 			try {
+				// R2: a link is never a session, even when it resolves inside the
+				// root — returning it would let a removal delete its target.
+				if (lstatSync(dirPath).isSymbolicLink()) continue;
 				if (!statSync(dirPath).isDirectory()) continue;
 				if (!isInside(rootReal, realpathSync(dirPath))) continue;
 			} catch {
@@ -160,16 +154,28 @@ function findSessionDir(sessionsRoot, sessionId) {
  */
 function removeSessionDir(dirPath, sessionsRoot) {
 	const rootReal = realpathSync(sessionsRoot);
+
+	// R2: inspect the path itself first. `realpathSync` would resolve a link and
+	// we would then be checking (and removing) its TARGET.
+	const stat = lstatSync(dirPath);
+	if (stat.isSymbolicLink()) {
+		throw new Error("refusing to remove a link");
+	}
+	if (!stat.isDirectory()) {
+		throw new Error("refusing to remove something that is not a directory");
+	}
+
 	const real = realpathSync(dirPath);
-	// `isInside` counts the root itself as "inside", which is right for a
-	// containment question and catastrophic here: rmSync on the root would wipe
-	// every session on the machine. Refuse it explicitly, and refuse anything that
-	// merely CONTAINS the root (removing a parent takes the root with it).
 	if (real === rootReal) {
 		throw new Error("refusing to remove the sessions root itself");
 	}
 	if (!isInside(rootReal, real)) {
 		throw new Error("refusing to remove a path outside the sessions root");
+	}
+	// R1: exactly <root>/<project>/<segment>. A shallower target would take other
+	// sessions with it; a deeper one is not a session directory at all.
+	if (dirname(dirname(real)) !== rootReal) {
+		throw new Error("refusing to remove a path that is not a two-level session directory");
 	}
 	rmSync(real, { recursive: true, force: false });
 }
