@@ -15,6 +15,7 @@
 
 import { defineFeatures } from './registry.js'
 import { mount as quoteReplyMount } from './features/quote-reply.js'
+import { mount as draftSaverMount } from './features/draft-saver.js'
 
 /** One counter per mount, so the tests can assert mount counts. */
 export function createFeatureProbe() {
@@ -65,7 +66,8 @@ export function createFeatures(probe, host) {
       reversible: false,
       mount(ctx, env) {
         probe.bump('draft-saver')
-        track('draft-saver', env)
+        // The real feature: the instance-scoped storage guard (S3 matrix A–F).
+        return draftSaverMount(ctx, env)
       },
     },
     {

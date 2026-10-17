@@ -270,16 +270,16 @@
   // src/client/registry.js
   function defineFeature(spec) {
     if (!spec || typeof spec !== "object") throw new TypeError("feature spec must be an object");
-    const { id, configKey, title, mount: mount2, reversible } = spec;
+    const { id, configKey, title, mount: mount3, reversible } = spec;
     if (typeof id !== "string" || id.length === 0) throw new TypeError("feature needs a string id");
     if (typeof configKey !== "string" || configKey.length === 0) {
       throw new TypeError("feature " + id + " needs a configKey");
     }
-    if (typeof mount2 !== "function") throw new TypeError("feature " + id + " needs mount()");
+    if (typeof mount3 !== "function") throw new TypeError("feature " + id + " needs mount()");
     if (typeof reversible !== "boolean") {
       throw new TypeError("feature " + id + " must declare reversible: true|false");
     }
-    return Object.freeze({ id, configKey, title: title ?? id, mount: mount2, reversible });
+    return Object.freeze({ id, configKey, title: title ?? id, mount: mount3, reversible });
   }
   function defineFeatures(list) {
     const ids = /* @__PURE__ */ new Set();
@@ -710,6 +710,330 @@
     );
   }
 
+  // src/client/features/draft-guard.js
+  var BACKUP_KEY = "dsh-draft-saver.backup.v1";
+  var DRAFT_PREFIX = "dsh.conversation.";
+  var PATCH_MARK = /* @__PURE__ */ Symbol.for("dsh.draft-saver.patch");
+  var MAX_LAST_READ = 512;
+  var EMPTY_DRAFT = JSON.stringify({ draft: { text: "", references: [] }, view: null, viewRequest: null });
+  var LIVE = /* @__PURE__ */ new WeakMap();
+  function readDraftValue(raw) {
+    if (typeof raw !== "string") return { ok: false };
+    try {
+      const parsed = JSON.parse(raw);
+      const draft = parsed && parsed.draft;
+      if (!draft || typeof draft !== "object") return { ok: false };
+      const text = typeof draft.text === "string" ? draft.text : "";
+      return { ok: true, text, references: Array.isArray(draft.references) ? draft.references : [] };
+    } catch (error) {
+      return { ok: false };
+    }
+  }
+  function draftTextOf(raw) {
+    const parsed = readDraftValue(raw);
+    return parsed.ok ? parsed.text : "";
+  }
+  function previewOf(text) {
+    const oneLine = text.replace(/\s+/g, " ").trim();
+    return oneLine.length > 80 ? oneLine.slice(0, 80) + "…" : oneLine;
+  }
+  function markPatch(wrapper) {
+    try {
+      Object.defineProperty(wrapper, PATCH_MARK, { value: true, enumerable: false });
+    } catch (error) {
+    }
+    return wrapper;
+  }
+  function installDraftGuard(getStorage, options = {}) {
+    const { onRestore, allowPrototypeFallback = false } = options;
+    const first = typeof getStorage === "function" ? getStorage() : getStorage;
+    if (!first || typeof first.getItem !== "function" || typeof first.setItem !== "function") {
+      return { dispose() {
+      }, status: "unavailable", patched: false, reused: false, reason: "no storage" };
+    }
+    const existing = LIVE.get(first);
+    if (existing) {
+      return {
+        dispose() {
+        },
+        status: existing.status,
+        patched: existing.patched,
+        reused: true,
+        mode: existing.mode,
+        reason: "already patched by this module"
+      };
+    }
+    if (first.setItem && first.setItem[PATCH_MARK]) {
+      return {
+        dispose() {
+        },
+        status: "conflict",
+        patched: false,
+        reused: false,
+        reason: "a draft guard is already installed on this storage"
+      };
+    }
+    const second = typeof getStorage === "function" ? getStorage() : first;
+    const unstable = second !== first;
+    const original = { getItem: first.getItem, setItem: first.setItem };
+    const hadOwn = {
+      getItem: Object.prototype.hasOwnProperty.call(first, "getItem"),
+      setItem: Object.prototype.hasOwnProperty.call(first, "setItem")
+    };
+    const state = {
+      active: true,
+      lastRead: /* @__PURE__ */ new Map(),
+      status: "patched"
+    };
+    function backupRead() {
+      try {
+        const raw = original.getItem.call(first, BACKUP_KEY);
+        if (raw === null) return null;
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== "object") return null;
+        if (typeof parsed.raw !== "string" || typeof parsed.key !== "string") return null;
+        return parsed;
+      } catch (error) {
+        return null;
+      }
+    }
+    function backupWrite(record) {
+      try {
+        original.setItem.call(first, BACKUP_KEY, JSON.stringify(record));
+      } catch (error) {
+      }
+    }
+    function publish(notice) {
+      if (!state.active) return;
+      if (typeof onRestore !== "function") return;
+      try {
+        onRestore(notice);
+      } catch (error) {
+        console.error("[dsh-toolbox] draft notice failed", error);
+      }
+    }
+    function onWrite(key, value) {
+      const parsed = readDraftValue(value);
+      if (!parsed.ok) return;
+      const seen = state.lastRead.get(key);
+      const text = parsed.text;
+      const existingBackup = backupRead();
+      if (text.trim() !== "") {
+        if (typeof seen === "string" && draftTextOf(seen) === text) return;
+        if (existingBackup && existingBackup.key === key && existingBackup.raw === value) return;
+        backupWrite({ v: 1, at: Date.now(), key, raw: value, chars: text.length, preview: previewOf(text) });
+        return;
+      }
+      if (text === "") {
+        backupWrite({ v: 1, at: Date.now(), key, raw: EMPTY_DRAFT, chars: 0, preview: "" });
+      }
+    }
+    function decideRead(key, raw) {
+      const backup = backupRead();
+      if (!backup) return raw;
+      const newest = draftTextOf(backup.raw);
+      const own = raw === null ? "" : draftTextOf(raw);
+      if (own === newest) return raw;
+      if (newest.trim() === "") return own.trim() === "" ? raw : backup.raw;
+      publish({ at: Date.now(), chars: backup.chars, preview: backup.preview, text: newest });
+      return backup.raw;
+    }
+    function onRead(key, raw) {
+      const answer = decideRead(key, raw);
+      if (state.lastRead.size > MAX_LAST_READ) state.lastRead.clear();
+      state.lastRead.set(key, answer);
+      return answer;
+    }
+    const isMine = (target) => target === first;
+    function makeSetItem(invoke) {
+      return markPatch(function dshDraftSaverSetItem(key, value) {
+        const result = invoke(this, key, value);
+        if (!state.active) return result;
+        const name = String(key);
+        if (!name.startsWith(DRAFT_PREFIX)) return result;
+        try {
+          onWrite(name, String(value));
+        } catch (error) {
+          console.error("[dsh-toolbox] draft mirror failed", error);
+        }
+        return result;
+      });
+    }
+    function makeGetItem(invoke) {
+      return markPatch(function dshDraftSaverGetItem(key) {
+        const raw = invoke(this, key);
+        if (!state.active) return raw;
+        const name = String(key);
+        if (!name.startsWith(DRAFT_PREFIX)) return raw;
+        try {
+          return onRead(name, raw);
+        } catch (error) {
+          console.error("[dsh-toolbox] draft restore failed", error);
+          return raw;
+        }
+      });
+    }
+    let mode = "instance";
+    let patched = false;
+    let protoSetRef;
+    let protoGetRef;
+    let protoSetWrapper;
+    let protoGetWrapper;
+    const instanceSet = makeSetItem(function(self, key, value) {
+      return original.setItem.call(self, key, value);
+    });
+    const instanceGet = makeGetItem(function(self, key) {
+      return original.getItem.call(self, key);
+    });
+    if (!unstable) {
+      try {
+        const descriptor = Object.getOwnPropertyDescriptor(first, "setItem");
+        if (descriptor && descriptor.writable === false) throw new TypeError("setItem is not writable");
+        first.setItem = instanceSet;
+        first.getItem = instanceGet;
+        patched = first.setItem === instanceSet && first.getItem === instanceGet;
+        if (!patched) throw new TypeError("the instance refused the patch");
+      } catch (error) {
+        try {
+          if (first.setItem === instanceSet) delete first.setItem;
+          if (first.getItem === instanceGet) delete first.getItem;
+        } catch (cleanupError) {
+        }
+        state.status = "unsupported";
+        patched = false;
+      }
+    } else if (allowPrototypeFallback) {
+      const proto = Object.getPrototypeOf(first);
+      protoSetRef = proto.setItem;
+      protoGetRef = proto.getItem;
+      protoSetWrapper = makeSetItem(function(self, key, value) {
+        return protoSetRef.call(self, key, value);
+      });
+      protoGetWrapper = makeGetItem(function(self, key) {
+        return protoGetRef.call(self, key);
+      });
+      const guardedSet = markPatch(function dshDraftSaverProtoSetItem(key, value) {
+        const result = protoSetRef.call(this, key, value);
+        if (!state.active || !isMine(this)) return result;
+        const name = String(key);
+        if (!name.startsWith(DRAFT_PREFIX)) return result;
+        try {
+          onWrite(name, String(value));
+        } catch (error) {
+          console.error("[dsh-toolbox] draft mirror failed", error);
+        }
+        return result;
+      });
+      const guardedGet = markPatch(function dshDraftSaverProtoGetItem(key) {
+        const raw = protoGetRef.call(this, key);
+        if (!state.active || !isMine(this)) return raw;
+        const name = String(key);
+        if (!name.startsWith(DRAFT_PREFIX)) return raw;
+        try {
+          return onRead(name, raw);
+        } catch (error) {
+          return raw;
+        }
+      });
+      try {
+        proto.setItem = guardedSet;
+        proto.getItem = guardedGet;
+        protoSetWrapper = guardedSet;
+        protoGetWrapper = guardedGet;
+        patched = proto.setItem === guardedSet && proto.getItem === guardedGet;
+        mode = "prototype";
+        if (!patched) state.status = "unsupported";
+      } catch (error) {
+        state.status = "unsupported";
+        patched = false;
+      }
+    } else {
+      state.status = "unstable";
+    }
+    const handle = {
+      get status() {
+        return state.status;
+      },
+      get active() {
+        return state.active;
+      },
+      patched,
+      reused: false,
+      mode,
+      dispose() {
+        if (!state.active) return;
+        state.active = false;
+        LIVE.delete(first);
+        if (!patched) return;
+        try {
+          if (mode === "instance") {
+            const ours = first.setItem === instanceSet || first.getItem === instanceGet;
+            const theirs = first.setItem !== void 0 && first.setItem !== instanceSet || first.getItem !== void 0 && first.getItem !== instanceGet;
+            if (theirs) {
+              state.status = "needs-refresh";
+              console.warn("[dsh-toolbox] draft guard: a later patch replaced ours; leaving it in place");
+              return;
+            }
+            if (!ours) return;
+            if (first.setItem === instanceSet) {
+              if (hadOwn.setItem) first.setItem = original.setItem;
+              else delete first.setItem;
+            }
+            if (first.getItem === instanceGet) {
+              if (hadOwn.getItem) first.getItem = original.getItem;
+              else delete first.getItem;
+            }
+          } else {
+            const proto = Object.getPrototypeOf(first);
+            if (proto.setItem !== protoSetWrapper || proto.getItem !== protoGetWrapper) {
+              state.status = "needs-refresh";
+              return;
+            }
+            proto.setItem = protoSetRef;
+            proto.getItem = protoGetRef;
+          }
+        } catch (error) {
+          state.status = "needs-refresh";
+          console.error("[dsh-toolbox] draft guard restore failed", error);
+        }
+      }
+    };
+    if (patched) LIVE.set(first, handle);
+    return handle;
+  }
+
+  // src/client/features/draft-saver.js
+  function mount2(ctx, env) {
+    const getStorage = () => {
+      try {
+        return typeof window !== "undefined" ? window.localStorage : void 0;
+      } catch (error) {
+        return void 0;
+      }
+    };
+    const handle = installDraftGuard(getStorage, {
+      onRestore: (notice) => {
+        try {
+          window.dispatchEvent(new CustomEvent("dsh-toolbox:draft-restore", { detail: notice }));
+        } catch (error) {
+          console.info("[dsh-toolbox] draft restored", notice);
+        }
+      }
+    });
+    if (handle.status !== "patched") {
+      console.warn("[dsh-toolbox] draft guard not active: " + handle.status + (handle.reason ? " (" + handle.reason + ")" : ""));
+    }
+    const dispose = () => {
+      try {
+        handle.dispose();
+      } catch (error) {
+        console.error("[dsh-toolbox] draft guard dispose failed", error);
+      }
+    };
+    env.track(dispose);
+    return dispose;
+  }
+
   // src/client/features.js
   function createFeatureProbe() {
     const mounts = /* @__PURE__ */ new Map();
@@ -756,7 +1080,7 @@
         reversible: false,
         mount(ctx, env) {
           probe.bump("draft-saver");
-          track("draft-saver", env);
+          return mount2(ctx, env);
         }
       },
       {
