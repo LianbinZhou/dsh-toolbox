@@ -1002,8 +1002,198 @@
     return handle;
   }
 
+  // src/client/features/draft-notice.js
+  var NS2 = "dsh-toolbox.draft-saver";
+  var NOTICE_SLOT = "conversation.input.overlay";
+  var NOTICE_ID = "draft-saver.notice";
+  var AUTO_DISMISS_MS = 2e4;
+  var ZH2 = {
+    notice: "已恢复上次未发送的草稿（{chars} 字）",
+    copy: "复制",
+    copied: "已复制",
+    copyFailed: "复制失败",
+    clear: "清空",
+    dismiss: "知道了",
+    hint: "来自上一个会话、还没发送的内容；你可以直接改、发出去，或点清空丢掉它。"
+  };
+  var EN2 = {
+    notice: "Restored an unsent draft ({chars} chars)",
+    copy: "Copy",
+    copied: "Copied",
+    copyFailed: "Copy failed",
+    clear: "Clear",
+    dismiss: "Got it",
+    hint: "Text from an earlier session that was never sent; edit it, send it, or clear it away."
+  };
+  function createNoticeBus() {
+    let current = null;
+    const listeners = /* @__PURE__ */ new Set();
+    return {
+      get() {
+        return current;
+      },
+      publish(next) {
+        current = next ?? null;
+        for (const listener of Array.from(listeners)) {
+          try {
+            listener();
+          } catch (error) {
+            console.error("[dsh-toolbox] draft notice listener failed", error);
+          }
+        }
+      },
+      subscribe(listener) {
+        listeners.add(listener);
+        return () => {
+          listeners.delete(listener);
+        };
+      },
+      dispose() {
+        listeners.clear();
+        current = null;
+      }
+    };
+  }
+  function previewOf2(text) {
+    const flat = String(text).replace(/\s+/g, " ").trim();
+    return flat.length > 60 ? flat.slice(0, 60) + "…" : flat;
+  }
+  function isMyNotice(snapshot, draft) {
+    return Boolean(
+      snapshot && typeof snapshot.text === "string" && snapshot.text !== "" && draft !== null && typeof draft === "string" && (draft === snapshot.text || draft.startsWith(snapshot.text))
+    );
+  }
+  async function copyText2(text) {
+    try {
+      if (typeof navigator !== "undefined" && navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch (error) {
+    }
+    try {
+      const area = document.createElement("textarea");
+      area.value = text;
+      area.setAttribute("readonly", "");
+      area.style.position = "fixed";
+      area.style.top = "0";
+      area.style.opacity = "0";
+      document.body.appendChild(area);
+      area.select();
+      const done = document.execCommand("copy");
+      document.body.removeChild(area);
+      return done === true;
+    } catch (error) {
+      return false;
+    }
+  }
+  var BUTTON_STYLE = {
+    appearance: "none",
+    border: "1px solid var(--dsw-alias-border-l2, rgba(127,127,127,0.4))",
+    background: "transparent",
+    color: "inherit",
+    font: "inherit",
+    padding: "2px 8px",
+    borderRadius: "7px",
+    cursor: "pointer"
+  };
+  function createNoticeComponent(bus, t) {
+    return function DraftSaverNotice(props) {
+      const [snapshot, setSnapshot] = useState(bus.get());
+      const [copied, setCopied] = useState("");
+      useEffect(() => {
+        const sync = () => setSnapshot(bus.get());
+        const off = bus.subscribe(sync);
+        sync();
+        return off;
+      }, []);
+      useEffect(() => {
+        if (!snapshot) return void 0;
+        const timer = setTimeout(() => bus.publish(null), AUTO_DISMISS_MS);
+        return () => clearTimeout(timer);
+      }, [snapshot]);
+      const readInput = props.useInput;
+      const input = typeof readInput === "function" ? readInput((state) => state) : null;
+      const draft = input && typeof input.draft === "string" ? input.draft : null;
+      const actions = props.inputActions;
+      if (!isMyNotice(snapshot, draft)) return null;
+      const copy = () => {
+        copyText2(draft).then((done) => {
+          setCopied(done ? "copied" : "failed");
+          bus.publish(Object.assign({}, snapshot));
+          setTimeout(() => setCopied(""), 1800);
+        });
+      };
+      const clear = () => {
+        try {
+          if (actions && typeof actions.setDraft === "function") actions.setDraft("");
+        } catch (error) {
+          console.error("[dsh-toolbox] clearing the restored draft failed", error);
+        }
+        bus.publish(null);
+      };
+      return h(
+        "div",
+        {
+          "data-draft-saver": "notice",
+          style: {
+            position: "fixed",
+            left: "50%",
+            bottom: "104px",
+            transform: "translateX(-50%)",
+            display: "flex",
+            alignItems: "center",
+            gap: "10px",
+            maxWidth: "min(620px, calc(100vw - 32px))",
+            padding: "8px 12px",
+            borderRadius: "10px",
+            border: "1px solid var(--dsw-alias-border-l2, rgba(127,127,127,0.35))",
+            background: "var(--dsw-alias-bg-overlay, rgba(28,28,30,0.96))",
+            color: "var(--dsw-alias-label-primary, #f5f5f5)",
+            boxShadow: "0 8px 28px rgba(0,0,0,0.3)",
+            fontSize: "12.5px",
+            lineHeight: "1.4",
+            zIndex: 60
+          }
+        },
+        [
+          h(
+            "span",
+            { key: "text", title: snapshot.preview || "", style: { flex: "1 1 auto", minWidth: "0" } },
+            t("notice", { chars: snapshot.chars })
+          ),
+          h(
+            "button",
+            { key: "copy", type: "button", style: BUTTON_STYLE, title: t("hint"), onClick: copy },
+            copied === "copied" ? t("copied") : copied === "failed" ? t("copyFailed") : t("copy")
+          ),
+          h("button", { key: "clear", type: "button", style: BUTTON_STYLE, title: t("hint"), onClick: clear }, t("clear")),
+          h("button", { key: "dismiss", type: "button", style: BUTTON_STYLE, onClick: () => bus.publish(null) }, t("dismiss"))
+        ]
+      );
+    };
+  }
+  function mountNotice(ctx, env, bus) {
+    const t = ctx.locale.bind(NS2);
+    env.track(ctx.effect(() => ctx.locale.register(NS2, "zh", ZH2), "draft-saver: zh dictionary"));
+    env.track(ctx.effect(() => ctx.locale.register(NS2, "en", EN2), "draft-saver: en dictionary"));
+    env.track(
+      ctx.effect(
+        () => ctx.slots.inject(
+          NOTICE_SLOT,
+          () => ctx.slots.register({ name: NOTICE_SLOT, id: NOTICE_ID, order: 320 }, function DraftSaverNoticeEntry(props) {
+            const Notice = createNoticeComponent(bus, t);
+            return h(Notice, props);
+          })
+        ),
+        "draft-saver: restored-draft notice"
+      )
+    );
+  }
+
   // src/client/features/draft-saver.js
   function mount2(ctx, env) {
+    const bus = createNoticeBus();
     const getStorage = () => {
       try {
         return typeof window !== "undefined" ? window.localStorage : void 0;
@@ -1013,15 +1203,18 @@
     };
     const handle = installDraftGuard(getStorage, {
       onRestore: (notice) => {
-        try {
-          window.dispatchEvent(new CustomEvent("dsh-toolbox:draft-restore", { detail: notice }));
-        } catch (error) {
-          console.info("[dsh-toolbox] draft restored", notice);
-        }
+        bus.publish({
+          at: notice.at,
+          chars: notice.chars,
+          text: notice.text ?? "",
+          preview: notice.preview || previewOf2(notice.text ?? "")
+        });
       }
     });
     if (handle.status !== "patched") {
       console.warn("[dsh-toolbox] draft guard not active: " + handle.status + (handle.reason ? " (" + handle.reason + ")" : ""));
+    } else {
+      mountNotice(ctx, env, bus);
     }
     try {
       if (typeof window !== "undefined") {
@@ -1029,6 +1222,7 @@
           status: handle.status,
           patched: handle.patched,
           mode: handle.mode,
+          notice: () => bus.get(),
           active: () => handle.active,
           ownSetItem: () => Object.prototype.hasOwnProperty.call(window.localStorage, "setItem")
         };
@@ -1036,6 +1230,11 @@
     } catch (error) {
     }
     const dispose = () => {
+      try {
+        bus.dispose();
+      } catch (error) {
+        console.error("[dsh-toolbox] draft notice dispose failed", error);
+      }
       try {
         handle.dispose();
       } catch (error) {
