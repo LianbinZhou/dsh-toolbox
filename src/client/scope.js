@@ -1,16 +1,17 @@
 /**
- * The transactional scope (fix for P0-3 / review 3.5).
+ * The transactional scope (fix for P0-3 / P1-5 / P1-6).
  *
- * Every side effect a feature creates has to be registered here BEFORE the
- * container trusts the feature. Two consequences the tests pin down:
+ * Every side effect a feature creates is registered here before the container
+ * trusts the feature.
  *
- *   1. A `mount` that throws half way is rolled back: the effects it already
- *      registered are undone, in reverse order, each in its own try/catch.
- *   2. One throwing disposer never stops the others from running, and `dispose`
- *      is idempotent, so a double teardown cannot undo somebody else's restore.
- *
- * `track` accepts a plain disposer function, a Cordis fiber (`{ dispose() }`,
- * which is what `ctx.inject(...)` and `ctx.effect(...)` return), or nothing.
+ * - A `mount` that throws half way is rolled back: the effects it already
+ *   registered run in reverse order, each in its own try/catch.
+ * - One throwing disposer never stops the others, and `dispose` is idempotent.
+ * - A Cordis fiber disposes ASYNCHRONOUSLY. `dispose()` therefore collects those
+ *   promises (each already `.catch`ed) and returns a promise, so a caller can
+ *   await the teardown and no rejection is left unhandled.
+ * - The same disposer registered twice runs once: a `WeakSet` de-duplicates by
+ *   identity, so "returned a disposer AND env.track'ed it" is safe.
  */
 
 function toDisposer(value) {
@@ -22,7 +23,20 @@ function toDisposer(value) {
 
 export function createScope(label = 'scope') {
   const undo = []
+  const seen = new WeakSet()
   let closed = false
+
+  /** Run one disposer; collect a returned promise instead of dropping it. */
+  function run(disposer, pending) {
+    const result = disposer()
+    if (result && typeof result.then === 'function') {
+      pending.push(
+        Promise.resolve(result).catch((error) => {
+          console.error('[dsh-toolbox] async disposer failed in ' + label, error)
+        }),
+      )
+    }
+  }
 
   return {
     label,
@@ -31,15 +45,20 @@ export function createScope(label = 'scope') {
     track(value) {
       const disposer = toDisposer(value)
       if (disposer === null) return value
+
       if (closed) {
         // Registering after teardown must undo immediately, never accumulate.
+        const sink = []
         try {
-          disposer()
+          run(disposer, sink)
         } catch (error) {
-          console.error('[dsh-toolbox] late disposer failed', error)
+          console.error('[dsh-toolbox] late disposer failed in ' + label, error)
         }
         return value
       }
+
+      if (seen.has(disposer)) return value
+      seen.add(disposer)
       undo.push(disposer)
       return value
     },
@@ -49,21 +68,25 @@ export function createScope(label = 'scope') {
       return undo.length
     },
 
-    /** Undo everything, newest first, each isolated. Idempotent. */
+    /**
+     * Undo everything, newest first, each isolated.
+     * @returns a promise that settles when the asynchronous disposers are done
+     */
     dispose() {
-      if (closed) return
+      if (closed) return Promise.resolve()
       closed = true
-      const pending = undo.splice(0).reverse()
+      const pending = []
       let first
-      for (const disposer of pending) {
+      for (const disposer of undo.splice(0).reverse()) {
         try {
-          disposer()
+          run(disposer, pending)
         } catch (error) {
           if (first === undefined) first = error
           console.error('[dsh-toolbox] disposer failed in ' + label, error)
         }
       }
       if (first !== undefined) throw first
+      return Promise.all(pending)
     },
   }
 }

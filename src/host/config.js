@@ -1,44 +1,40 @@
 /**
- * Host config (fix for P0-1).
+ * Host config (fix for P0-1 / P1-2).
  *
- * The shape is a SINGLE root-object volatile: `.volatile()` is applied to the
- * whole `Schema.object(...)`, exactly like the shipped `dsh-client-auto-continue`
- * does. Consequences, measured on this machine:
+ * The shape is a SINGLE root-object volatile, exactly like the shipped
+ * `dsh-client-auto-continue`. Measured on this machine:
  *
  *     const Config = Shape.volatile()
- *     config.get()         // { sessionSearch: true, ... }   <- the values
- *     config.sessionSearch // undefined                       <- NOT a boolean
- *     config.sessionSearch.get()  // TypeError                <- the v2 bug
+ *     config.get()                // { sessionSearch: true, ... }   <- the values
+ *     config.sessionSearch        // undefined                       <- NOT a boolean
+ *     config.sessionSearch.get()  // TypeError                       <- the v2 bug
  *
- * So every read goes through `readConfig` / `isOn` below, and the destructured
- * form is banned: `const { sessionSearch } = config` silently caches undefined.
- * A root volatile ref also changes in place on toggle, so a cached destructure
- * would freeze the value forever.
+ * So every read goes through `readConfig` / `isOn`, and destructuring is banned:
+ * a root volatile ref is updated in place, so a cached destructure freezes the
+ * value forever.
+ *
+ * **Fail closed**: a missing key, an unreadable config or a thrown getter all
+ * answer `false`. Earlier versions defaulted to `true`, which meant a broken
+ * settings read left every feature switched on.
  */
 
 import z from '@deepseek-ai/schemastery'
+import { SWITCH_KEYS } from '../shared/switches.js'
 
-export const CLIENT_FEATURE_KEYS = ['quoteReply', 'draftSaver', 'panelMenu', 'archivePanel', 'pluginZh']
+const shape = {}
+for (const key of SWITCH_KEYS) shape[key] = z.boolean().default(true)
 
-const Shape = z.object({
-  quoteReply: z.boolean().default(true),
-  draftSaver: z.boolean().default(true),
-  panelMenu: z.boolean().default(true),
-  archivePanel: z.boolean().default(true),
-  pluginZh: z.boolean().default(true),
-  sessionSearch: z.boolean().default(true),
-})
-
-/** The row's schema. `.volatile()` => the form exists and applies live. */
-export const Config = Shape.volatile()
+/** The row's schema. `.volatile()` => the settings form exists and applies live. */
+export const Config = z.object(shape).volatile()
 
 /** The current values, for either a volatile ref or a plain object. Never throws. */
 export function readConfig(config) {
   try {
     if (config !== undefined && config !== null && typeof config.get === 'function') {
-      return config.get() ?? {}
+      const values = config.get()
+      return values && typeof values === 'object' ? values : {}
     }
-    return config ?? {}
+    return config && typeof config === 'object' ? config : {}
   } catch (error) {
     console.error('[dsh-toolbox] reading the volatile config failed', error)
     return {}
@@ -46,10 +42,12 @@ export function readConfig(config) {
 }
 
 /**
- * One switch, re-read on every call.
- * A missing key falls back to `fallback` (true, matching the schema default).
+ * One switch, re-read on every call, **fail closed**.
+ * @param config - volatile ref or plain object
+ * @param key - switch key
+ * @param fallback - only pass `true` where "on" is genuinely the safe default
  */
-export function isOn(config, key, fallback = true) {
+export function isOn(config, key, fallback = false) {
   const values = readConfig(config)
   const value = values[key]
   return value === undefined ? fallback : value === true

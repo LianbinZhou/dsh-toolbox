@@ -24,7 +24,7 @@
   "scripts": {
     "build": "node tools/build.mjs",
     "test": "node --test",
-    "prepack": "node tools/build.mjs && node --test test/"
+    "prepack": "node tools/build.mjs && node --test"
   },
   "devDependencies": {
     "esbuild": "0.28.2"

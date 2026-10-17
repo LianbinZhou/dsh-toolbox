@@ -1,10 +1,10 @@
 /**
  * Container semantics. These are the red-light cases from the v2 review (P0-3).
  *
- * Note on timing: the initial switch read is asynchronous by design
- * (`ctx.configForms` is not available at apply time). `container.ready()`
- * resolves after the first reconcile driven by the REAL values, so these tests
- * await it instead of guessing ticks.
+ * `container.ready()` resolves after the first reconcile driven by the REAL
+ * switch values (the read is async by design). `container.feedSync()` re-enters
+ * reconcile inside the current call, which is how the "switch flipped during
+ * mount" case is tested for real instead of relying on microtask ordering.
  */
 
 import test from 'node:test'
@@ -109,7 +109,7 @@ test('I1: an absent key is OFF, not ON', async () => {
   container.dispose()
 })
 
-test('I2: a mount that finishes after the switch flipped is rolled back', async () => {
+test('I2: a true re-entry during mount (switch flips off) rolls the mount back', async () => {
   const log = { mounts: {}, disposals: {} }
   let container
   const features = defineFeatures([
@@ -119,10 +119,11 @@ test('I2: a mount that finishes after the switch flipped is rolled back', async 
       reversible: true,
       mount(ctx, env) {
         log.mounts.slow = (log.mounts.slow ?? 0) + 1
-        container.feed({ quoteReply: false })
         env.track(() => {
           log.disposals.slow = (log.disposals.slow ?? 0) + 1
         })
+        // Re-enter reconcile NOW, while phase === 'mounting'.
+        container.feedSync({ quoteReply: false })
       },
     },
   ])
@@ -139,14 +140,14 @@ test('I2: a mount that finishes after the switch flipped is rolled back', async 
 
   await container.ready()
   await flush()
-  assert.equal(log.mounts.slow, 1, 'mount runs once')
-  assert.equal(log.disposals.slow, 1, 'the effect registered during mount is undone')
-  assert.equal(container.phaseOf('slow'), 'off', 'the feature does not stay mounted')
+  assert.equal(log.mounts.slow, 1, 'mount ran once')
+  assert.equal(log.disposals.slow, 1, 'the effect registered during mount was undone')
+  assert.equal(container.phaseOf('slow'), 'off', 'the feature did not stay mounted')
   assert.equal(container.liveCount(), 0)
   container.dispose()
 })
 
-test('I2: a re-entrant reconcile during mount cannot double-mount', async () => {
+test('I2: a re-entrant reconcile cannot double-mount', async () => {
   const log = { mounts: {}, disposals: {} }
   let container
   const features = defineFeatures([
@@ -156,7 +157,7 @@ test('I2: a re-entrant reconcile during mount cannot double-mount', async () => 
       reversible: true,
       mount(ctx, env) {
         log.mounts.reentrant = (log.mounts.reentrant ?? 0) + 1
-        container.feed({ quoteReply: true })
+        container.feedSync({ quoteReply: true })
         env.track(() => {})
       },
     },
@@ -175,6 +176,7 @@ test('I2: a re-entrant reconcile during mount cannot double-mount', async () => 
   await container.ready()
   await flush()
   assert.equal(log.mounts.reentrant, 1, 'the mounting placeholder blocks the second mount')
+  assert.equal(container.phaseOf('reentrant'), 'mounted')
   container.dispose()
 })
 
@@ -205,10 +207,10 @@ test('I3: a feature that only returns a disposer (no env.track) is still unmount
   })
 
   await container.ready()
-  assert.equal(container.phaseOf('returns-disposer'), 'mounted', 'the returned disposer is enough to mount')
+  assert.equal(container.phaseOf('returns-disposer'), 'mounted')
   container.feed({ quoteReply: false })
   await container.settled()
-  assert.equal(log.disposals.r, 1, 'the returned disposer must be called on toggle-off')
+  assert.equal(log.disposals.r, 1, 'the returned disposer is called on toggle-off')
   assert.equal(container.liveCount(), 0)
   container.dispose()
 })
@@ -269,4 +271,52 @@ test('dispose after the truth resolved must never mount through a late promise',
   resolveTruth({ quoteReply: true })
   await flush()
   assert.equal(log.mounts.late, undefined, 'a disposed container never mounts')
+})
+
+test('P1-5: an async fiber disposal settles through the container without an unhandled rejection', async () => {
+  const rejections = []
+  const onRejection = (error) => rejections.push(error)
+  process.on('unhandledRejection', onRejection)
+
+  let resolved = false
+  const features = defineFeatures([
+    {
+      id: 'fiber',
+      configKey: 'quoteReply',
+      reversible: true,
+      mount(ctx, env) {
+        env.track({
+          dispose: () =>
+            new Promise((_resolve, reject) => {
+              setTimeout(() => {
+                resolved = true
+                reject(new Error('fiber dispose failed'))
+              }, 5)
+            }),
+        })
+      },
+    },
+  ])
+
+  const container = createContainer({
+    features,
+    ctx: {},
+    env: {},
+    readSwitches: () => Promise.resolve({ quoteReply: true }),
+    cachedSwitches: () => ({}),
+    watchSwitches: () => () => {},
+    onError: () => {},
+  })
+
+  await container.ready()
+  assert.equal(container.phaseOf('fiber'), 'mounted')
+  container.feed({ quoteReply: false })
+  await container.settled()
+  await new Promise((resolve) => setTimeout(resolve, 20))
+
+  process.off('unhandledRejection', onRejection)
+  assert.equal(resolved, true, 'the async disposal ran')
+  assert.equal(rejections.length, 0, 'the rejection was caught by the scope')
+  assert.equal(container.phaseOf('fiber'), 'off')
+  container.dispose()
 })

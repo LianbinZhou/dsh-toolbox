@@ -1,19 +1,19 @@
 /**
  * Browser entry. This is the file esbuild turns into `client.js`.
  *
- * It exists to solve P0-2: the module must register itself through the loader,
- * and it must receive React from the loader instead of importing it.
- *
- * The factory parameter is deliberately named `load`, not `require`: esbuild
- * rewrites a syntactic `require("react")` into its own `__require` shim, which
- * throws in the browser. A call through a differently named parameter stays a
- * plain call.
+ * P0-2 rules:
+ *   - the module registers itself through `window.__ModuleLoader__.load({ id, factory })`;
+ *   - React comes from the loader's own require and is handed to `installRuntime`;
+ *     no file imports react, and the factory parameter is named `load` so esbuild
+ *     cannot rewrite it into its `__require` shim;
+ *   - the settings card registers `plugins.row.config` under `dsh-toolbox#toolbox`.
  */
 
-import { installRuntime } from './runtime.js'
+import { installRuntime, h } from './runtime.js'
 import { createContainer } from './container.js'
 import { createFeatures, createFeatureProbe } from './features.js'
 import { readSwitches, cacheSwitches, watchSwitches } from './switches.js'
+import { createSettingsCard, SLOT, SLOT_KEY } from './form.js'
 
 function apply(ctx) {
   const probe = createFeatureProbe()
@@ -32,25 +32,44 @@ function apply(ctx) {
   const container = createContainer({
     features: createFeatures(probe, host),
     ctx,
-    env: { h: undefined, probe, host },
-    readSwitches: (context) => readSwitches(context),
+    // `h` is the late-bound runtime accessor, so features migrated in S2 can use it.
+    env: { h, probe, host },
+    readSwitches: (context, options) => readSwitches(context, options),
     cachedSwitches: () => cacheSwitches(),
-    watchSwitches: (context, callback) => watchSwitches(context, callback),
+    watchSwitches: (context, callback, options) => watchSwitches(context, callback, options),
     onError: (id, error) => console.error('[dsh-toolbox] ' + id, error),
   })
 
-  // Diagnostics surface, used by the artifact test and by on-page debugging.
+  // The settings card: always present, never behind a switch.
+  const card = createSettingsCard(ctx)
+  const offCard = ctx.effect(
+    () =>
+      ctx.slots.inject(SLOT, () =>
+        ctx.slots.register({ name: SLOT, key: SLOT_KEY }, (props) =>
+          h(card, Object.assign({}, props, { ctx })),
+        ),
+      ),
+    'toolbox: settings card on the plugin row',
+  )
+
   window.__DSH_TOOLBOX__ = {
     phaseOf: container.phaseOf,
     liveCount: container.liveCount,
     mounts: probe.count,
     listeners: host.listenerCount,
+    slot: SLOT + '#' + SLOT_KEY,
   }
 
-  // Returning the disposer keeps the plugin testable; it is registered with the
-  // fiber either way, so this changes nothing for the Host.
   return ctx.effect(() => () => {
-    container.dispose()
+    try {
+      if (typeof offCard === 'function') offCard()
+      else if (offCard && typeof offCard.dispose === 'function') offCard.dispose()
+    } catch (error) {
+      console.error('[dsh-toolbox] removing the settings card failed', error)
+    }
+    Promise.resolve(container.dispose()).catch((error) => {
+      console.error('[dsh-toolbox] container disposal failed', error)
+    })
     listeners.clear()
     if (window.__DSH_TOOLBOX__) delete window.__DSH_TOOLBOX__
   }, 'toolbox: dispose container')

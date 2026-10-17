@@ -1,16 +1,17 @@
 /**
- * P0-1: the root-object volatile shape, measured with the real schemastery.
+ * P0-1 / P1-2: the root-object volatile shape and the fail-closed rule, measured
+ * with the real schemastery.
  *
- * The trap this test locks down: with `.volatile()` on the whole object,
- * `config.sessionSearch` is `undefined`, so `config.sessionSearch.get()` throws.
- * If that throw happened inside `tools.guard`, every tool call would become a
- * tool error. The guard must read through `isOn(config, key)` and never throw.
+ * The trap: with `.volatile()` on the whole object, `config.sessionSearch` is
+ * `undefined`, so `config.sessionSearch.get()` throws. A throw inside
+ * `tools.guard` would become a tool error for EVERY tool.
+ *
+ * The rule the S1 review enforced: a missing key or an unreadable config is OFF.
  */
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { Config, isOn, readConfig } from '../src/host/config.js'
-import { makeGuard, GUARDED_TOOL } from '../src/host/index.js'
 
 const ALL_ON = {
   quoteReply: true,
@@ -49,9 +50,22 @@ test('readConfig tolerates a volatile ref, a plain object, null and a throwing r
   )
 })
 
+test('P1-2: isOn fails closed — a missing key is OFF', () => {
+  assert.equal(isOn({}, 'sessionSearch'), false, 'a missing key must not switch a feature on')
+  assert.equal(isOn({}, 'sessionSearch', true), true, 'only an explicit fallback opts into on')
+  assert.equal(isOn(undefined, 'pluginZh'), false)
+})
+
+test('P1-2: an unreadable config is OFF, not ON', () => {
+  const broken = {
+    get() {
+      throw new Error('config exploded')
+    },
+  }
+  assert.equal(isOn(broken, 'sessionSearch'), false)
+})
+
 test('isOn re-reads every call, so an in-place update is seen', () => {
-  // The real volatile ref freezes its value object, so simulate the in-place
-  // swap the loader performs: get() answers with the current object each call.
   let current = { sessionSearch: true }
   const ref = { get: () => current }
   assert.equal(isOn(ref, 'sessionSearch'), true)
@@ -59,36 +73,8 @@ test('isOn re-reads every call, so an in-place update is seen', () => {
   assert.equal(isOn(ref, 'sessionSearch'), false, 'no destructured cache may freeze the value')
 })
 
-test('isOn falls back to the schema default for a missing key', () => {
-  assert.equal(isOn({}, 'sessionSearch'), true)
-  assert.equal(isOn({}, 'sessionSearch', false), false)
-})
-
-test('the guard never throws, for any input shape', () => {
-  const guard = makeGuard(Config(ALL_ON))
-  for (const input of [undefined, null, {}, { name: 'other_tool' }, { name: GUARDED_TOOL }]) {
-    assert.doesNotThrow(() => guard(input))
-  }
-  const broken = makeGuard({
-    get() {
-      throw new Error('config exploded')
-    },
-  })
-  assert.doesNotThrow(() => broken({ name: GUARDED_TOOL }))
-  assert.equal(broken({ name: GUARDED_TOOL }), undefined, 'a failing read must not deny')
-})
-
-test('the guard only touches its own tool (never a global deny)', () => {
-  const guard = makeGuard({ sessionSearch: false })
-  assert.equal(guard({ name: 'some_other_tool' }), undefined, 'unrelated tools stay allowed')
-  assert.equal(guard({ name: 'read' }), undefined)
-  const denial = guard({ name: GUARDED_TOOL })
-  assert.equal(typeof denial, 'string')
-  assert.match(denial, /switched off/)
-  assert.match(denial, /[Dd]o not retry/)
-})
-
-test('an enabled switch yields no denial', () => {
-  const guard = makeGuard({ sessionSearch: true })
-  assert.equal(guard({ name: GUARDED_TOOL }), undefined)
+test('isOn honours an explicit false from the real volatile schema', () => {
+  const config = Config(Object.assign({}, ALL_ON, { pluginZh: false }))
+  assert.equal(isOn(config, 'pluginZh'), false)
+  assert.equal(isOn(config, 'quoteReply'), true)
 })

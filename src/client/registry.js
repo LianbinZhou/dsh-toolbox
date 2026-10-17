@@ -1,23 +1,23 @@
 /**
  * Feature registry and contract validation.
  *
- * Contract (now consistent with the container, review 3.5):
+ * Contract:
  *
  *     mount(ctx, env) -> void | disposer | { dispose() }
  *
- * Both forms are honoured: whatever `mount` returns is passed to `scope.track`.
- * A feature that returns a disposer AND uses `env.track` is therefore safe —
- * no effect is ever silently unowned.
+ * Both forms are honoured: whatever `mount` returns is passed to `scope.track`,
+ * and `scope.track` de-duplicates by identity, so "returned a disposer AND
+ * tracked it through env.track" runs it once.
  *
- * `reversible` is mandatory and means: "if this feature is switched off while
- * it is running, can it fully undo itself?" A feature that cannot (it wrote to
- * the page, patched a global, or persisted something) must declare false, and
- * the container then refuses to mount it before the real switch value is known.
+ * `reversible` is mandatory and means: "if this feature is switched off while it
+ * is running, can it fully undo itself?" A feature that cannot (it wrote to the
+ * page, patched a global, or persisted something) must declare false, and the
+ * container then refuses to mount it before the real switch value is known.
  */
 
 export function defineFeature(spec) {
   if (!spec || typeof spec !== 'object') throw new TypeError('feature spec must be an object')
-  const { id, configKey, title, mount, reversible, defaultOn } = spec
+  const { id, configKey, title, mount, reversible } = spec
   if (typeof id !== 'string' || id.length === 0) throw new TypeError('feature needs a string id')
   if (typeof configKey !== 'string' || configKey.length === 0) {
     throw new TypeError('feature ' + id + ' needs a configKey')
@@ -26,10 +26,9 @@ export function defineFeature(spec) {
   if (typeof reversible !== 'boolean') {
     throw new TypeError('feature ' + id + ' must declare reversible: true|false')
   }
-  if (defaultOn !== undefined && typeof defaultOn !== 'boolean') {
-    throw new TypeError('feature ' + id + ' has a non-boolean defaultOn')
-  }
-  return Object.freeze({ id, configKey, title: title ?? id, mount, reversible, defaultOn: defaultOn ?? false })
+  // `defaultOn` used to live here. It was never read (the container only honours
+  // an explicit `true`), so it is gone rather than misleading.
+  return Object.freeze({ id, configKey, title: title ?? id, mount, reversible })
 }
 
 /** Collect a feature list, rejecting duplicate ids and duplicate config keys. */

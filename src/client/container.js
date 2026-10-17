@@ -1,21 +1,21 @@
 /**
  * The container: the only place that decides what is mounted.
  *
- * Three invariants (P0-3). Each one has a test that fails without it:
+ * Invariants, each with a test that fails without it:
  *
- *   I1. **Irreversible features wait for the real switch value.** A feature with
- *       `reversible: false` is never mounted from the cache and never mounted
- *       while `settingsReady` is false. The cache can only preload reversible
- *       features, and a feature whose key is absent from the values is OFF.
+ *   I1. **Irreversible features wait for the real switch value.** `reversible:false`
+ *       is never mounted from the cache and never while `settingsReady` is false.
+ *       A feature whose key is absent from the values is OFF. A failed read is a
+ *       reason to mount nothing, not a reason to guess.
  *   I2. **A mount that finishes after the switch flipped is rolled back.** The
- *       state machine writes `mounting` before calling `mount`, and after `mount`
- *       returns it re-checks `want`, `disposed` and a per-feature generation
- *       counter. Any mismatch disposes the scope and leaves the feature `off`.
- *   I3. **No effect is unowned.** Whatever `mount` returns is tracked, in
- *       addition to anything the feature tracked through `env.track`.
+ *       state machine writes `mounting` before calling `mount`, then re-checks
+ *       `want`, `disposed` and a per-feature generation counter. `feedSync()`
+ *       exists so a test can really re-enter during `mount`; `feed()` only queues.
+ *   I3. **No effect is unowned.** Whatever `mount` returns is tracked in addition
+ *       to anything the feature tracked through `env.track`.
  *
- * Reconciles are serialised on one queue, so a re-entrant call (a feature that
- * fires a settings event while mounting) cannot interleave two mounts.
+ * Teardown is asynchronous: Cordis fibers dispose through promises, so settled
+ * states await them instead of leaving rejections behind.
  */
 
 import { createScope } from './scope.js'
@@ -38,14 +38,13 @@ export function createContainer(options) {
   const state = new Map()
   const scopes = new Map()
   const generation = new Map()
+  const pendingDisposals = []
 
   let disposed = false
   let settingsReady = false
   let queue = Promise.resolve()
   let values = {}
 
-  // The initial read is asynchronous, so tests (and the on-page diagnostics)
-  // need one promise that means "the first real reconcile has run".
   let markReady
   let readyDone = false
   const ready = new Promise((resolve) => {
@@ -56,9 +55,9 @@ export function createContainer(options) {
     }
   })
 
+  const isCancelled = () => disposed
   const wantOf = (feature, source) => source[feature.configKey] === true
 
-  /** Only keys owned by reversible features may come from the cache. */
   function reversibleOnly(cache) {
     if (!cache || typeof cache !== 'object') return {}
     const out = {}
@@ -66,6 +65,21 @@ export function createContainer(options) {
       if (feature.reversible && cache[feature.configKey] === true) out[feature.configKey] = true
     }
     return out
+  }
+
+  function disposeScope(scope) {
+    try {
+      const result = scope.dispose()
+      if (result && typeof result.then === 'function') {
+        pendingDisposals.push(
+          Promise.resolve(result).catch((error) => {
+            onError(scope.label, error)
+          }),
+        )
+      }
+    } catch (error) {
+      onError(scope.label, error)
+    }
   }
 
   function mountFeature(feature) {
@@ -77,15 +91,10 @@ export function createContainer(options) {
     const scopedEnv = Object.assign({}, env, { track: (value) => scope.track(value) })
 
     try {
-      // Contract: mount may return a disposer; both forms are tracked (I3).
       scope.track(feature.mount(ctx, scopedEnv))
     } catch (error) {
       onError(feature.id, error)
-      try {
-        scope.dispose()
-      } catch (disposeError) {
-        onError(feature.id, disposeError)
-      }
+      disposeScope(scope)
       state.set(feature.id, OFF)
       return
     }
@@ -93,11 +102,7 @@ export function createContainer(options) {
     // I2: the switch may have flipped while mount was running.
     const superseded = disposed || generation.get(feature.id) !== mine || !wantOf(feature, values)
     if (superseded) {
-      try {
-        scope.dispose()
-      } catch (error) {
-        onError(feature.id, error)
-      }
+      disposeScope(scope)
       state.set(feature.id, OFF)
       return
     }
@@ -111,12 +116,7 @@ export function createContainer(options) {
     const scope = scopes.get(feature.id)
     scopes.delete(feature.id)
     state.set(feature.id, OFF)
-    if (!scope) return
-    try {
-      scope.dispose()
-    } catch (error) {
-      onError(feature.id, error)
-    }
+    if (scope) disposeScope(scope)
   }
 
   function reconcile(next) {
@@ -138,16 +138,20 @@ export function createContainer(options) {
     }
   }
 
+  function flushDisposals() {
+    return Promise.all(pendingDisposals.splice(0)).then(() => undefined)
+  }
+
   function schedule(next) {
     queue = queue
       .then(() => {
         if (!disposed) reconcile(next)
+        return flushDisposals()
       })
       .catch((error) => onError('container', error))
     return queue
   }
 
-  /** Start: cache first (reversible only), then the truth, then follow changes. */
   function start() {
     if (typeof cachedSwitches === 'function') {
       schedule(reversibleOnly(safeCall(cachedSwitches, onError)))
@@ -155,7 +159,7 @@ export function createContainer(options) {
 
     let settled
     try {
-      settled = Promise.resolve(readSwitches(ctx))
+      settled = Promise.resolve(readSwitches(ctx, { isCancelled }))
     } catch (error) {
       settled = Promise.reject(error)
     }
@@ -166,40 +170,41 @@ export function createContainer(options) {
       })
       .then(() => markReady())
       .catch((error) => {
-        // I1: a failed read is not a reason to guess. Everything off.
         onError('settings', error)
         settingsReady = true
         schedule({}).then(() => markReady())
       })
 
-    const off = typeof watchSwitches === 'function' ? watchSwitches(ctx, (next) => schedule(next)) : undefined
+    const off =
+      typeof watchSwitches === 'function'
+        ? watchSwitches(ctx, (next) => schedule(next), { isCancelled })
+        : undefined
     return off
   }
 
   function dispose() {
-    if (disposed) return
+    if (disposed) return Promise.resolve()
     disposed = true
     markReady()
-    for (const [, scope] of scopes) {
-      try {
-        scope.dispose()
-      } catch (error) {
-        onError('dispose', error)
-      }
-    }
+    for (const [, scope] of scopes) disposeScope(scope)
     scopes.clear()
     state.clear()
+    return flushDisposals()
   }
 
   const stopWatching = start()
 
   return {
-    /** Take the switch values once more (used by tests). */
+    /** Queue new switch values (production path). */
     feed: (next) => schedule(next),
-    /** Whether a feature is currently mounted. */
+    /** Reconcile immediately, inside the current call. Used to test real re-entry. */
+    feedSync: (next) => reconcile(next),
     phaseOf: (id) => state.get(id) ?? OFF,
-    /** Live scopes, for leak assertions. */
     liveCount: () => scopes.size,
+    /** Resolves after the queue and every async disposal has settled. */
+    settled: () => queue.then(() => flushDisposals()),
+    /** Resolves after the first reconcile driven by the real switch values. */
+    ready: () => ready,
     dispose() {
       try {
         if (typeof stopWatching === 'function') stopWatching()
@@ -207,12 +212,8 @@ export function createContainer(options) {
       } catch (error) {
         onError('watch', error)
       }
-      dispose()
+      return dispose()
     },
-    /** Wait for the queue (tests). */
-    settled: () => queue,
-    /** Wait for the first reconcile driven by the real switch values. */
-    ready: () => ready,
   }
 }
 

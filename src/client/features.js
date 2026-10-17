@@ -1,16 +1,16 @@
 /**
  * The five client features, S1 stubs.
  *
- * S1 only needs the shape: id, configKey, reversible, mount. The real bodies
- * move in from `dsh-plugins/*` during S2–S5. Each stub records the effects it
- * creates through `env.track`, so the container and leak tests can prove that a
- * toggle really unwinds them.
+ * S1 only needs the shape: id, configKey, reversible, mount. The real bodies move
+ * in from `dsh-plugins/*` during S2–S5. Each stub records one disposable effect
+ * through `env.track`, so the container and leak tests can prove a toggle
+ * really unwinds it.
  *
- * `reversible` is the honest answer to "can this feature undo itself while it
- * runs?". `quote-reply` and `panel-menu` only own slots and listeners, so they
- * are reversible. The other three write to the page, to `Storage`, or to a
- * restored DOM, so they are not — the container must not mount them before the
- * real switch value is known.
+ * `reversible` answers "can this feature undo itself while it runs?".
+ * `quote-reply` and `panel-menu` only own slots and listeners, so they are
+ * reversible. The other three write to the page, to `Storage`, or to a restored
+ * DOM, so they are not — the container must not mount them before the real
+ * switch value is known.
  */
 
 import { defineFeatures } from './registry.js'
@@ -31,9 +31,7 @@ export function createFeatureProbe() {
 
 export function createFeatures(probe, host) {
   const track = (id, env) => {
-    // Every stub declares exactly one effect: a listener that must be removed.
-    const off = host.addListener(id, () => {})
-    env.track(off)
+    env.track(host.addListener(id, () => {}))
   }
 
   return defineFeatures([
@@ -42,7 +40,6 @@ export function createFeatures(probe, host) {
       configKey: 'quoteReply',
       title: '划词引用',
       reversible: true,
-      defaultOn: true,
       mount(ctx, env) {
         probe.bump('quote-reply')
         track('quote-reply', env)
@@ -53,7 +50,6 @@ export function createFeatures(probe, host) {
       configKey: 'panelMenu',
       title: '面板收纳',
       reversible: true,
-      defaultOn: true,
       mount(ctx, env) {
         probe.bump('panel-menu')
         track('panel-menu', env)
@@ -64,7 +60,6 @@ export function createFeatures(probe, host) {
       configKey: 'draftSaver',
       title: '草稿保险箱',
       reversible: false,
-      defaultOn: true,
       mount(ctx, env) {
         probe.bump('draft-saver')
         track('draft-saver', env)
@@ -75,7 +70,6 @@ export function createFeatures(probe, host) {
       configKey: 'archivePanel',
       title: '历史归档',
       reversible: false,
-      defaultOn: true,
       mount(ctx, env) {
         probe.bump('archive-panel')
         track('archive-panel', env)
@@ -86,7 +80,6 @@ export function createFeatures(probe, host) {
       configKey: 'pluginZh',
       title: '插件汉化',
       reversible: false,
-      defaultOn: true,
       mount(ctx, env) {
         probe.bump('plugin-zh')
         track('plugin-zh', env)
