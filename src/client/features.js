@@ -16,6 +16,7 @@
 import { defineFeatures } from './registry.js'
 import { mount as quoteReplyMount } from './features/quote-reply.js'
 import { mount as draftSaverMount } from './features/draft-saver.js'
+import { mount as panelMenuMount } from './features/panel-menu.js'
 
 /** One counter per mount, so the tests can assert mount counts. */
 export function createFeatureProbe() {
@@ -56,7 +57,10 @@ export function createFeatures(probe, host) {
       reversible: true,
       mount(ctx, env) {
         probe.bump('panel-menu')
-        track('panel-menu', env)
+        // The real feature: hides the native panel rows behind one trigger.
+        // Reversible because it only owns slots (+ the <style> React renders
+        // inside the trigger, which leaves with the component).
+        return panelMenuMount(ctx, env)
       },
     },
     {

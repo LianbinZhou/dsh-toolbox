@@ -27,6 +27,9 @@
   function useRef(...args) {
     return getRuntime().useRef(...args);
   }
+  function fragment() {
+    return getRuntime().Fragment;
+  }
 
   // src/client/scope.js
   function toDisposer(value) {
@@ -270,16 +273,16 @@
   // src/client/registry.js
   function defineFeature(spec) {
     if (!spec || typeof spec !== "object") throw new TypeError("feature spec must be an object");
-    const { id, configKey, title, mount: mount3, reversible } = spec;
+    const { id, configKey, title, mount: mount4, reversible } = spec;
     if (typeof id !== "string" || id.length === 0) throw new TypeError("feature needs a string id");
     if (typeof configKey !== "string" || configKey.length === 0) {
       throw new TypeError("feature " + id + " needs a configKey");
     }
-    if (typeof mount3 !== "function") throw new TypeError("feature " + id + " needs mount()");
+    if (typeof mount4 !== "function") throw new TypeError("feature " + id + " needs mount()");
     if (typeof reversible !== "boolean") {
       throw new TypeError("feature " + id + " must declare reversible: true|false");
     }
-    return Object.freeze({ id, configKey, title: title ?? id, mount: mount3, reversible });
+    return Object.freeze({ id, configKey, title: title ?? id, mount: mount4, reversible });
   }
   function defineFeatures(list) {
     const ids = /* @__PURE__ */ new Set();
@@ -416,7 +419,7 @@
   }
   function QuoteMenu(props) {
     const t = props.t;
-    const [menu, setMenu] = useState(null);
+    const [menu, setMenu2] = useState(null);
     const [hover, setHover] = useState(null);
     const boxRef = useRef(null);
     const openRef = useRef(false);
@@ -429,7 +432,7 @@
       if (!openRef.current) return;
       openRef.current = false;
       setHover(null);
-      setMenu(null);
+      setMenu2(null);
     }, []);
     useEffect(() => () => {
       if (closeTimer.current) window.clearTimeout(closeTimer.current);
@@ -463,7 +466,7 @@
         const pos = place(sel, fallbackX, fallbackY);
         openRef.current = true;
         setHover(null);
-        setMenu({ x: pos.x, y: pos.y, raw, quoted, status: null });
+        setMenu2({ x: pos.x, y: pos.y, raw, quoted, status: null });
       }
       function onMouseUp(e) {
         if (e.button !== 0) return;
@@ -506,7 +509,7 @@
     }, [close]);
     if (!menu) return null;
     function markCopied() {
-      setMenu((m) => m ? { ...m, status: "copied" } : m);
+      setMenu2((m) => m ? { ...m, status: "copied" } : m);
       closeTimer.current = window.setTimeout(close, 800);
     }
     function onQuote() {
@@ -1029,14 +1032,14 @@
   };
   function createNoticeBus() {
     let current = null;
-    const listeners = /* @__PURE__ */ new Set();
+    const listeners2 = /* @__PURE__ */ new Set();
     return {
       get() {
         return current;
       },
       publish(next) {
         current = next ?? null;
-        for (const listener of Array.from(listeners)) {
+        for (const listener of Array.from(listeners2)) {
           try {
             listener();
           } catch (error) {
@@ -1045,13 +1048,13 @@
         }
       },
       subscribe(listener) {
-        listeners.add(listener);
+        listeners2.add(listener);
         return () => {
-          listeners.delete(listener);
+          listeners2.delete(listener);
         };
       },
       dispose() {
-        listeners.clear();
+        listeners2.clear();
         current = null;
       }
     };
@@ -1258,6 +1261,437 @@
     return dispose;
   }
 
+  // src/client/features/panel-menu.js
+  var NS3 = "dsh-panel-menu";
+  var TRIGGER_SLOT = "sidebar.footer.action";
+  var OVERLAY_SLOT2 = "shell.overlay";
+  var TRIGGER_ID = "panel-menu.trigger";
+  var MENU_ID2 = "panel-menu.menu";
+  var PANEL_SLOT = "sidebar.panellist";
+  var NAV_SELECTOR = '[class*="panelList"]';
+  var PROXY_ENTRIES = [
+    {
+      selector: '[class~="dsham-entry"]',
+      labelKey: "archive",
+      order: 20,
+      activeAttr: "data-active"
+    }
+  ];
+  var LABEL_OVERRIDES = {
+    plugins: "officialPlugins"
+  };
+  var ZH3 = {
+    trigger: "全部面板",
+    empty: "没有可显示的面板",
+    failed: "打开失败",
+    officialPlugins: "官方插件管理",
+    archive: "历史归档"
+  };
+  var EN3 = {
+    trigger: "All panels",
+    empty: "Nothing to show",
+    failed: "Could not open",
+    officialPlugins: "Official plugin manager",
+    archive: "Archive"
+  };
+  var MENU_WIDTH = 236;
+  var MENU_MAX_HEIGHT = 320;
+  var FALLBACK_FONT = '13px/18px system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif';
+  var HIDE_CSS = [
+    "/* dsh-panel-menu — the panel rows are reachable from the popover menu. */",
+    NAV_SELECTOR + "{display:none !important}"
+  ].concat(PROXY_ENTRIES.map((entry) => entry.selector + "{display:none !important}")).join("\n");
+  var listeners = /* @__PURE__ */ new Set();
+  var menuState = { open: false, anchor: null, items: [], error: null };
+  function setMenu(patch) {
+    menuState = Object.assign({}, menuState, patch);
+    listeners.forEach((notify) => {
+      try {
+        notify();
+      } catch (err) {
+        console.error("[dsh-panel-menu] menu listener failed", err);
+      }
+    });
+  }
+  function useMenuState() {
+    const [, bump] = useState(0);
+    useEffect(() => {
+      const notify = () => bump((n) => n + 1);
+      listeners.add(notify);
+      return () => {
+        listeners.delete(notify);
+      };
+    }, []);
+    return menuState;
+  }
+  function all(selector) {
+    try {
+      return Array.prototype.slice.call(document.querySelectorAll(selector));
+    } catch (err) {
+      console.error("[dsh-panel-menu] selector failed", selector, err);
+      return [];
+    }
+  }
+  function labelOf(label, fallback) {
+    try {
+      if (typeof label === "function") {
+        const value = label();
+        if (typeof value === "string" && value) return value;
+      }
+    } catch (err) {
+      console.error("[dsh-panel-menu] label thunk failed", err);
+    }
+    return typeof label === "string" && label ? label : fallback;
+  }
+  function collectPanels(ctx, t) {
+    const items = [];
+    const seen = /* @__PURE__ */ new Set();
+    try {
+      const slots = ctx.slots || (typeof ctx.get === "function" ? ctx.get("slots") : null);
+      const ledger = slots && typeof slots.entriesOfSlot === "function" ? slots.entriesOfSlot(PANEL_SLOT) : [];
+      (ledger || []).forEach((entry, index) => {
+        const options = entry && entry.options || {};
+        const id = options.id;
+        if (!id || id === TRIGGER_ID || seen.has(id)) return;
+        seen.add(id);
+        items.push({
+          key: "slot:" + id,
+          label: LABEL_OVERRIDES[id] ? t(LABEL_OVERRIDES[id]) : labelOf(options.label, id),
+          order: typeof options.order === "number" ? options.order : index,
+          panelId: id,
+          run() {
+            const layout = ctx.layout || (typeof ctx.get === "function" ? ctx.get("layout") : null);
+            if (!layout || typeof layout.selectPanel !== "function") {
+              throw new Error("layout.selectPanel is unavailable");
+            }
+            layout.selectPanel(id);
+          }
+        });
+      });
+    } catch (err) {
+      console.error("[dsh-panel-menu] could not read the panel ledger", err);
+    }
+    PROXY_ENTRIES.forEach((spec, index) => {
+      const nodes = all(spec.selector);
+      if (nodes.length === 0) return;
+      const domLabel = nodes[0].getAttribute ? nodes[0].getAttribute("aria-label") : null;
+      items.push({
+        key: "dom:" + index,
+        label: domLabel && domLabel.trim() || t(spec.labelKey),
+        order: typeof spec.order === "number" ? spec.order : 100 + index,
+        isActive: () => all(spec.selector).some(
+          (node) => node.hasAttribute(spec.activeAttr || "data-active") || node.getAttribute("aria-current") === "page"
+        ),
+        run() {
+          const target = all(spec.selector)[0];
+          if (!target) throw new Error("the injected row is gone");
+          target.click();
+        }
+      });
+    });
+    return items.sort((a, b) => a.order - b.order);
+  }
+  function isItemActive(item, activePanelId) {
+    if (typeof item.isActive === "function") {
+      try {
+        return item.isActive() === true;
+      } catch (err) {
+        console.error("[dsh-panel-menu] active-state probe failed", item.key, err);
+        return false;
+      }
+    }
+    return item.panelId === activePanelId;
+  }
+  function moreGlyph(size) {
+    return h(
+      "svg",
+      {
+        width: size,
+        height: size,
+        viewBox: "0 0 16 16",
+        fill: "currentColor",
+        "aria-hidden": true,
+        style: { display: "block", flex: "0 0 auto" }
+      },
+      h("circle", { key: "a", cx: 3.2, cy: 8, r: 1.5 }),
+      h("circle", { key: "b", cx: 8, cy: 8, r: 1.5 }),
+      h("circle", { key: "c", cx: 12.8, cy: 8, r: 1.5 })
+    );
+  }
+  function checkGlyph(size) {
+    return h(
+      "svg",
+      {
+        width: size,
+        height: size,
+        viewBox: "0 0 16 16",
+        fill: "none",
+        stroke: "currentColor",
+        strokeWidth: 1.8,
+        strokeLinecap: "round",
+        strokeLinejoin: "round",
+        "aria-hidden": true,
+        style: { display: "block", flex: "0 0 auto" }
+      },
+      h("path", { d: "M3 8.5 6.2 11.7 13 5" })
+    );
+  }
+  function applyBody(ctx) {
+    ctx.effect(() => ctx.locale.register(NS3, "zh", ZH3), "panel-menu: zh dictionary");
+    ctx.effect(() => ctx.locale.register(NS3, "en", EN3), "panel-menu: en dictionary");
+    const t = ctx.locale.bind(NS3);
+    function PanelMenuTrigger(props) {
+      const snapshot = useMenuState();
+      const wide = props.wide !== false;
+      const size = wide ? 28 : 36;
+      function onClick(event) {
+        if (snapshot.open) {
+          setMenu({ open: false });
+          return;
+        }
+        let anchor = null;
+        try {
+          anchor = event.currentTarget.getBoundingClientRect();
+        } catch (err) {
+          console.error("[dsh-panel-menu] could not measure the trigger", err);
+        }
+        setMenu({ open: true, anchor, items: collectPanels(ctx, t), error: null });
+      }
+      return h(
+        fragment(),
+        null,
+        /* The stylesheet rides the always-mounted trigger, so it is
+         * present whether or not the menu is open. */
+        h("style", { key: "stylesheet" }, HIDE_CSS),
+        h(
+          "button",
+          {
+            key: "trigger",
+            type: "button",
+            className: "dshpm-trigger",
+            "aria-haspopup": "true",
+            "aria-expanded": snapshot.open ? "true" : "false",
+            "aria-label": t("trigger"),
+            title: t("trigger"),
+            onClick,
+            style: {
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: wide ? "flex-start" : "center",
+              gap: "6px",
+              flex: wide ? "1 1 auto" : "0 0 auto",
+              width: wide ? "auto" : size + "px",
+              height: size + "px",
+              padding: wide ? "0 9px" : "0",
+              margin: wide ? "0 2px" : "0",
+              border: "0",
+              borderRadius: "var(--dsw-radius-md, 8px)",
+              background: snapshot.open ? "var(--dsw-alias-interactive-bg-hover, rgba(127,127,127,0.14))" : "transparent",
+              color: "var(--dsw-alias-label-secondary, #6b7280)",
+              font: "inherit",
+              fontSize: "13px",
+              lineHeight: "18px",
+              whiteSpace: "nowrap",
+              cursor: "pointer"
+            }
+          },
+          moreGlyph(wide ? 16 : 18),
+          wide ? h("span", { key: "label" }, t("trigger")) : null
+        )
+      );
+    }
+    function PanelMenuOverlay(props) {
+      const snapshot = useMenuState();
+      const [hover, setHover] = useState(null);
+      const readPanelInfo = props.usePanelInfo;
+      const activePanelId = typeof readPanelInfo === "function" ? readPanelInfo((info) => info ? info.activePanelId : null) : null;
+      useEffect(() => {
+        if (!snapshot.open) return void 0;
+        function onKey(event) {
+          if (event.key === "Escape") setMenu({ open: false });
+        }
+        document.addEventListener("keydown", onKey);
+        return () => document.removeEventListener("keydown", onKey);
+      }, [snapshot.open]);
+      if (!snapshot.open) return null;
+      const anchor = snapshot.anchor;
+      let left = 12;
+      let bottom = 72;
+      if (anchor) {
+        left = Math.round(anchor.left);
+        bottom = Math.round(window.innerHeight - anchor.top + 8);
+      }
+      left = Math.max(8, Math.min(left, window.innerWidth - MENU_WIDTH - 8));
+      const rows = snapshot.items.map((item) => {
+        const active = isItemActive(item, activePanelId);
+        const hovered = hover === item.key;
+        return h(
+          "button",
+          {
+            key: item.key,
+            type: "button",
+            role: "menuitemradio",
+            "aria-checked": active ? "true" : "false",
+            title: item.label,
+            onMouseEnter: () => setHover(item.key),
+            onMouseLeave: () => setHover((current) => current === item.key ? null : current),
+            onClick: () => {
+              try {
+                item.run();
+                setMenu({ open: false, error: null });
+              } catch (err) {
+                console.error("[dsh-panel-menu] could not open", item.key, err);
+                const detail = err && err.message ? err.message : String(err);
+                setMenu({ error: t("failed") + " — " + detail });
+              }
+            },
+            style: {
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              width: "100%",
+              padding: "7px 9px",
+              border: "0",
+              borderRadius: "8px",
+              background: hovered ? "var(--dsw-alias-interactive-bg-hover, rgba(127,127,127,0.14))" : "transparent",
+              color: "var(--dsw-alias-label-primary, #1f2329)",
+              font: "inherit",
+              textAlign: "left",
+              cursor: "pointer"
+            }
+          },
+          h(
+            "span",
+            {
+              key: "label",
+              style: {
+                flex: "1 1 auto",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap"
+              }
+            },
+            item.label
+          ),
+          active ? checkGlyph(14) : null
+        );
+      });
+      return h(
+        "div",
+        {
+          key: "backdrop",
+          /* The overlay layer is click-through; this entry opts back in so
+           * a click anywhere closes the menu. */
+          style: { position: "fixed", inset: "0", zIndex: 9998, pointerEvents: "auto" },
+          onMouseDown: () => setMenu({ open: false }),
+          onContextMenu: (event) => {
+            event.preventDefault();
+            setMenu({ open: false });
+          }
+        },
+        h(
+          "div",
+          {
+            role: "menu",
+            "aria-label": t("trigger"),
+            onMouseDown: (event) => event.stopPropagation(),
+            style: {
+              position: "fixed",
+              left: left + "px",
+              bottom: bottom + "px",
+              width: MENU_WIDTH + "px",
+              maxHeight: MENU_MAX_HEIGHT + "px",
+              overflowY: "auto",
+              padding: "6px",
+              borderRadius: "12px",
+              background: "var(--dsw-alias-bg-overlay, #ffffff)",
+              border: "1px solid var(--dsw-alias-border-l1, rgba(0,0,0,0.10))",
+              boxShadow: "0 10px 30px rgba(0,0,0,0.18)",
+              color: "var(--dsw-alias-label-primary, #1f2329)",
+              font: FALLBACK_FONT,
+              userSelect: "none"
+            }
+          },
+          /* No heading row: the trigger already says "All panels", and the
+           * card opens straight onto the list. */
+          snapshot.items.length === 0 ? h(
+            "div",
+            {
+              key: "empty",
+              style: {
+                padding: "6px 8px",
+                color: "var(--dsw-alias-label-secondary, #6b7280)"
+              }
+            },
+            t("empty")
+          ) : rows,
+          snapshot.error ? h(
+            "div",
+            {
+              key: "error",
+              style: {
+                margin: "4px 2px 0",
+                padding: "6px 8px",
+                borderRadius: "8px",
+                background: "var(--dsw-alias-bg-layer-2, rgba(127,127,127,0.10))",
+                color: "var(--dsw-alias-state-error-primary, #d33)",
+                fontSize: "12px",
+                wordBreak: "break-word"
+              }
+            },
+            snapshot.error
+          ) : null
+        )
+      );
+    }
+    ctx.effect(
+      () => ctx.slots.inject(
+        TRIGGER_SLOT,
+        () => ctx.slots.register(
+          { name: TRIGGER_SLOT, id: TRIGGER_ID, order: 60 },
+          PanelMenuTrigger
+        )
+      ),
+      "panel-menu: sidebar trigger"
+    );
+    ctx.effect(
+      () => ctx.slots.inject(
+        OVERLAY_SLOT2,
+        () => ctx.slots.register({ name: OVERLAY_SLOT2, id: MENU_ID2, order: 900 }, PanelMenuOverlay)
+      ),
+      "panel-menu: panel popover"
+    );
+  }
+  function resetMenuState() {
+    try {
+      setMenu({ open: false, anchor: null, items: [], error: null });
+    } catch (error) {
+    }
+  }
+  function mount3(ctx, env) {
+    resetMenuState();
+    const scoped = new Proxy(ctx, {
+      get(target, prop) {
+        if (prop === "effect") {
+          return (fn, label) => env.track(target.effect(fn, label));
+        }
+        if (prop === "layout") {
+          try {
+            const declared = Reflect.get(target, prop);
+            if (declared) return declared;
+          } catch (error) {
+          }
+          return typeof target.get === "function" ? target.get("layout") : void 0;
+        }
+        return Reflect.get(target, prop);
+      }
+    });
+    applyBody(scoped);
+    const dispose = () => resetMenuState();
+    env.track(dispose);
+    return dispose;
+  }
+
   // src/client/features.js
   function createFeatureProbe() {
     const mounts = /* @__PURE__ */ new Map();
@@ -1294,7 +1728,7 @@
         reversible: true,
         mount(ctx, env) {
           probe.bump("panel-menu");
-          track("panel-menu", env);
+          return mount3(ctx, env);
         }
       },
       {
@@ -1699,15 +2133,15 @@
   // src/client/index.js
   function apply(ctx) {
     const probe = createFeatureProbe();
-    const listeners = /* @__PURE__ */ new Set();
+    const listeners2 = /* @__PURE__ */ new Set();
     const host = {
       addListener(id, listener) {
-        listeners.add(listener);
+        listeners2.add(listener);
         return () => {
-          listeners.delete(listener);
+          listeners2.delete(listener);
         };
       },
-      listenerCount: () => listeners.size
+      listenerCount: () => listeners2.size
     };
     const container = createContainer({
       features: createFeatures(probe, host),
@@ -1747,7 +2181,7 @@
       Promise.resolve(container.dispose()).catch((error) => {
         console.error("[dsh-toolbox] container disposal failed", error);
       });
-      listeners.clear();
+      listeners2.clear();
       if (window.__DSH_TOOLBOX__) delete window.__DSH_TOOLBOX__;
     }, "toolbox: dispose container");
   }

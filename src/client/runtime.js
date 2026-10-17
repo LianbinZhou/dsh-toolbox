@@ -60,3 +60,14 @@ export function useRef(...args) {
 export function useSyncExternalStore(...args) {
   return getRuntime().useSyncExternalStore(...args)
 }
+
+/**
+ * `React.Fragment`, resolved at call time.
+ *
+ * It is a VALUE (a symbol), not a hook, so it cannot be a transparent wrapper:
+ * call this function where the fragment type is needed, e.g.
+ * `h(fragment(), null, [a, b])`.
+ */
+export function fragment() {
+  return getRuntime().Fragment
+}
