@@ -1,8 +1,30 @@
-# dsh-toolbox bundle patch: one row, six volatile switches.
+# dsh-toolbox bundle patch: one row, six volatile switches, plus the official
+# session-search seam this package takes over from the retired dsh-session-search.
 #
-# The settings form is rendered by this bundle's own client half, registered on
-# the `plugins.row.config` slot under the key `dsh-toolbox#toolbox`. There is no
-# automatic form: a row without a registered cell shows nothing at all.
+# ---------------------------------------------------------------------------
+# 1) The official full-text seam. `dsh-base` mounts `session-query-sqlite` with
+#    `openAt: never` + an in-memory index, which keeps `ctx.sessionQuery` alive
+#    for reads but makes `searchSessions` fail with SESSION_QUERY_SEARCH_DISABLED.
+#    Re-declaring the same id here replaces its config: a durable index, opened
+#    lazily on the first search.
+#
+#    This is a STATIC patch layer. A runtime switch CANNOT turn it off — the
+#    `sessionSearch` switch only controls the agent-facing tool. That is
+#    deliberate and documented in the README.
+#
+#    NOTE: `path` is required by the official schema and is machine specific.
+#    A published build must switch to `:memory:` or a launcher-provided path.
+# ---------------------------------------------------------------------------
+- id: session-query-sqlite
+  config:
+    path: 'C:\Users\zhou0\.dsh\storages\session-search.db'
+    openAt: first-search
+
+# ---------------------------------------------------------------------------
+# 2) The toolbox row. The settings card is rendered by this bundle's own client
+#    half, registered on `plugins.row.config` under the key `dsh-toolbox#toolbox`.
+#    There is no automatic form: a row without a registered cell shows nothing.
+# ---------------------------------------------------------------------------
 - insert:
     - id: toolbox
       name: 'dsh-toolbox'

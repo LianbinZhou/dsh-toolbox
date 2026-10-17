@@ -15,7 +15,6 @@ export {
   readConfig,
   isOn,
   currentSwitches,
-  PROBE_TOOL,
   GUARDED_TOOL,
   DENIAL,
 } from './src/host/index.js'
