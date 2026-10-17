@@ -8,9 +8,9 @@
  */
 
 import { runServiceMatrix } from '../test/support/archive-service-matrix.mjs'
-import { createLegacyArchiveService } from '../test/fixtures/legacy-archive-service.mjs'
+import { createLegacyTombstoneService } from '../test/fixtures/legacy-tombstone-service.mjs'
 
-const summary = await runServiceMatrix(createLegacyArchiveService)
+const summary = await runServiceMatrix(createLegacyTombstoneService)
 
 const pad = (s, n) => String(s).padEnd(n)
 console.log('')
