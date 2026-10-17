@@ -27,15 +27,12 @@ import { join } from 'node:path'
 export { Config, isOn, readConfig }
 export const name = 'dsh-toolbox'
 /**
- * `optional` matters: `ctx.get('workspaceRegistry')` answers undefined for a
- * service this plugin never declared, even when the service exists — that is why
- * the first probe said workspaceRegistry=missing while sessions worked.
- * Declaring them OPTIONAL keeps the plugin loadable in a profile that lacks one.
+ * This Cordis accepts the ARRAY form only: an object `{required, optional}` is
+ * read as a list of service names and the plugin sits in `pending` forever
+ * ("waiting for services: required, optional"). Optional services are waited for
+ * with `ctx.inject([...], cb)` below instead.
  */
-export const inject = {
-  required: ['tools'],
-  optional: ['webServer', 'workspaceRegistry', 'sessions', 'sessionQuery'],
-}
+export const inject = ['tools']
 
 export const GUARDED_TOOL = 'session_search'
 
@@ -110,7 +107,7 @@ export function apply(ctx, config) {
     if (archiveApi !== null) return archiveApi
     const serviceOf = (name) => {
       try {
-        return typeof ctx.get === 'function' ? ctx.get(name) : undefined
+        return typeof sessionCtx.get === 'function' ? sessionCtx.get(name) : undefined
       } catch (error) {
         return undefined
       }
@@ -188,6 +185,20 @@ export function apply(ctx, config) {
       offTool = undefined
       console.info('[dsh-toolbox] session_search disposed (' + reason + ')')
     }
+  }
+
+  // The session services may arrive after this plugin: wait for them instead of
+  // reading once. `ctx.inject(deps, cb)` runs cb in a scope that carries them.
+  let sessionCtx = ctx
+  try {
+    const offServices = ctx.inject(['workspaceRegistry', 'sessions'], (scoped) => {
+      if (scoped) sessionCtx = scoped
+      console.info('[dsh-toolbox] session services ready; building the archive adapter')
+      syncArchiveHttp('services-ready')
+    })
+    if (typeof offServices === 'function') ctx.effect(() => offServices, 'dsh-toolbox: session services injection')
+  } catch (error) {
+    console.warn('[dsh-toolbox] ctx.inject([session services]) failed: ' + (error && error.message))
   }
 
   // webServer may not exist yet when apply runs: `ctx.get` would answer
