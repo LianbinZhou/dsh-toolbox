@@ -1921,11 +1921,12 @@
     { key: "panelMenu", label: "面板收纳", hint: "把侧栏的面板入口收进一个菜单" },
     { key: "archivePanel", label: "历史归档", hint: "列归档会话、一键恢复、删除" },
     { key: "pluginZh", label: "插件说明汉化", hint: "插件管理页的英文简介换成中文" },
-    { key: "sessionSearch", label: "会话搜索（宿主工具）", hint: "给 AI 一个 session_search 工具；不影响侧栏搜索" }
+    { key: "sessionSearch", label: "会话搜索（宿主工具）", hint: "给 AI 一个 session_search 工具；不影响侧栏搜索" },
+    { key: "archiveHttpApi", label: "归档 HTTP 接口（实验性）", hint: "给页面一个带令牌的删除通道；默认关闭", hostOnly: true }
   ]);
   var SWITCH_KEYS = Object.freeze(SWITCHES.map((entry) => entry.key));
   var CLIENT_SWITCH_KEYS = Object.freeze(
-    SWITCHES.filter((entry) => entry.key !== "sessionSearch").map((entry) => entry.key)
+    SWITCHES.filter((entry) => entry.hostOnly !== true && entry.key !== "sessionSearch").map((entry) => entry.key)
   );
 
   // src/client/form.js

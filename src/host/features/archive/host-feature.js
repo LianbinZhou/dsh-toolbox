@@ -86,3 +86,55 @@ export function mountArchiveRoutes({ webServer, token, origins, onDelete, regist
 
   return { registered: true, dispose, routes: [TOKEN_PATH, DELETE_PATH] }
 }
+
+
+/**
+ * The switch-driven lifecycle of the pair (Pi: the switch must not be a placebo).
+ *
+ * `sync()` runs on apply AND on every `loader/volatile-update`, so flipping the
+ * switch takes effect without a restart:
+ *
+ *   off -> on   mounts token + delete together
+ *   on  -> off  disposes both AND rotates the credential, so a page still holding
+ *               the old token gets 401 instead of a working handle
+ *   mount fails nothing stays registered; the reason is returned
+ */
+export function createArchiveHttpLifecycle({ readEnabled, registry, webServer, token, origins, onDelete, trustProxy = false } = {}) {
+  let mounted = null
+
+  function wants() {
+    try {
+      return readEnabled() === true
+    } catch (error) {
+      return false
+    }
+  }
+
+  function sync() {
+    const want = wants()
+    if (want && mounted === null) {
+      const result = mountArchiveRoutes({ webServer, token, origins, onDelete, registry, trustProxy, enabled: true })
+      if (result.registered !== true) return { registered: false, reason: result.reason }
+      mounted = result
+      return { registered: true }
+    }
+    if (!want && mounted !== null) {
+      mounted.dispose()
+      mounted = null
+      // The old credential must not outlive the switch.
+      if (registry && typeof registry.rotate === 'function') registry.rotate()
+      return { registered: false, reason: 'disabled' }
+    }
+    return { registered: mounted !== null }
+  }
+
+  return {
+    sync,
+    status: () => ({ registered: mounted !== null }),
+    dispose() {
+      if (mounted === null) return
+      mounted.dispose()
+      mounted = null
+    },
+  }
+}

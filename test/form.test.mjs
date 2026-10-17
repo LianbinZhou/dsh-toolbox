@@ -93,7 +93,7 @@ test('the card renders one checkbox per switch, and never throws', () => {
   })
   const inputs = inputsOf(tree)
   assert.equal(inputs.length, SWITCHES.length, 'six switches render')
-  assert.equal(inputs.length, 6)
+  assert.equal(inputs.length, SWITCHES.length)
   for (const input of inputs) {
     assert.equal(input.props.type, 'checkbox')
   }
@@ -146,7 +146,7 @@ test('the slot prop shape { state, mutate } is accepted instead of a controller'
     tree = Card({ view: 'page', form: slotForm })
   })
   const inputs = inputsOf(tree)
-  assert.equal(inputs.length, 6)
+  assert.equal(inputs.length, SWITCHES.length)
 
   inputs[0].props.onChange({ target: { checked: false } })
   await new Promise((resolve) => setTimeout(resolve, 10))
@@ -168,5 +168,5 @@ test('a broken form never blanks the card', () => {
   assert.doesNotThrow(() => {
     tree = Card({ view: 'page', form: { state: null, mutate: null } })
   })
-  assert.equal(inputsOf(tree).length, 6, 'all six switches still render')
+  assert.equal(inputsOf(tree).length, SWITCHES.length, 'all switches still render')
 })

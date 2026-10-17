@@ -13,6 +13,7 @@ import { readFileSync, existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
 import vm from 'node:vm'
+import { SWITCHES } from '../src/shared/switches.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const root = resolve(here, '..')
@@ -25,6 +26,7 @@ const ALL_ON = {
   archivePanel: true,
   pluginZh: true,
   sessionSearch: true,
+  archiveHttpApi: true,
 }
 
 /** A React stub with just enough hook behaviour to call a component directly. */
@@ -172,7 +174,7 @@ test('P0-2: the registered card renders six checkboxes without throwing', () => 
     return out
   }
   const inputs = flatten(tree).filter((node) => node.type === 'input')
-  assert.equal(inputs.length, 6, 'six switches render on the row page')
+  assert.equal(inputs.length, SWITCHES.length, 'one row per switch')
 })
 
 test('apply mounts the five client features from the real settings form', async () => {

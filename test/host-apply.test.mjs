@@ -18,6 +18,7 @@ const ALL_ON = {
   archivePanel: true,
   pluginZh: true,
   sessionSearch: true,
+  archiveHttpApi: true,
 }
 
 async function activate(applyFn) {

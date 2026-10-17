@@ -36,9 +36,14 @@ for (let i = 0; i < ${PER_WRITER}; i += 1) {
 
 function runChild(dir, tag) {
   return new Promise((resolve, reject) => {
+    // `node --test` exports NODE_TEST_CONTEXT (and friends) to its workers. A
+    // child that inherits them behaves like a test worker instead of a plain
+    // program, which made this test fail only inside the full suite.
+    const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('NODE_TEST')))
     const child = spawn(process.execPath, ['--input-type=module', '-e', childScript(dir, tag)], {
       stdio: ['ignore', 'ignore', 'pipe'],
       windowsHide: true,
+      env,
     })
     let stderr = ''
     child.stderr.on('data', (chunk) => {

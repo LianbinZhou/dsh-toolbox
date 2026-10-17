@@ -22,7 +22,15 @@ import z from '@deepseek-ai/schemastery'
 import { SWITCH_KEYS } from '../shared/switches.js'
 
 const shape = {}
-for (const key of SWITCH_KEYS) shape[key] = z.boolean().default(true)
+for (const key of SWITCH_KEYS) shape[key] = z.boolean().default(key !== 'archiveHttpApi')
+
+/**
+ * The shipping defaults, as plain data. `archiveHttpApi` is the one switch that
+ * must default to OFF: it opens a network surface.
+ */
+export const CONFIG_DEFAULTS = Object.freeze(
+  Object.fromEntries(SWITCH_KEYS.map((key) => [key, key !== 'archiveHttpApi'])),
+)
 
 /** The row's schema. `.volatile()` => the settings form exists and applies live. */
 export const Config = z.object(shape).volatile()

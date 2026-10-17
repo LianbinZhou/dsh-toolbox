@@ -20,6 +20,7 @@ const ALL_ON = {
   archivePanel: true,
   pluginZh: true,
   sessionSearch: true,
+  archiveHttpApi: true,
 }
 
 test('the schema is a volatile root: config.get() has the values', () => {
