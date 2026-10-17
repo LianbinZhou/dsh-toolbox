@@ -6,3 +6,6 @@ Thumbs.db
 
 # Windows shortcuts (machine-specific absolute paths)
 *.lnk
+
+# TypeScript incremental build output
+*.tsbuildinfo
