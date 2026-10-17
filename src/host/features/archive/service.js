@@ -34,7 +34,8 @@
  *   T8  `restore` moves a trashed session back.
  */
 
-import { isSafeSessionId } from './paths.js'
+import { dirname } from 'node:path'
+import { isInside, isSafeSessionId } from './paths.js'
 
 /** Stable machine codes; the route and the UI switch on these. */
 export const REASONS = {
@@ -189,8 +190,15 @@ export function createArchiveService(deps) {
           : { ok: true, removedDir: false, reason: REASONS.CLEANUP_ONLY, warning: 'cleanup incomplete' }
       }
 
-      // T1: same-volume or nothing. A copy+delete fallback is not atomic.
+      // T2: the trash must never live inside the tree the probe walks, or a trash
+      // entry could be discovered as a session and deleted twice.
       const trashRoot = deps.trashRoot()
+      const sessionsRoot = dirname(dirname(probe.dir))
+      if (isInside(sessionsRoot, trashRoot)) {
+        return { ok: false, status: 409, reason: 'unsafe-trash-root' }
+      }
+
+      // T1: same-volume or nothing. A copy+delete fallback is not atomic.
       if (!deps.sameVolume(trashRoot, probe.dir)) {
         return { ok: false, status: 409, reason: REASONS.CROSS_VOLUME }
       }
