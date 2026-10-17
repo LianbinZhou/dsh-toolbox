@@ -73,6 +73,27 @@ export function createSessionAdapter({ registry, sessions, sessionsRoot } = {}) 
   probe = createFsProbe({ sessionsRoot: rootFor })
 
   return {
+    /** Pure diagnostics: what the registry actually looks like at runtime. */
+    shape() {
+      const describe = (value) => {
+        const type = typeof value
+        let length = null
+        let keys = null
+        try {
+          if (value && (Array.isArray(value) || value instanceof Set || typeof value[Symbol.iterator] === 'function')) length = [...value].length
+          else if (typeof value === 'object' && value !== null) keys = Object.keys(value).slice(0, 25)
+        } catch (error) {
+          length = 'threw'
+        }
+        return { type, length, keys }
+      }
+      return {
+        registryKeys: Object.keys(registry || {}).slice(0, 40),
+        archivedSessionIds: describe(registry && registry.archivedSessionIds),
+        list: describe(registry && registry.list),
+        unarchiveSession: typeof (registry && registry.unarchiveSession),
+      }
+    },
     readArchived,
     isLive,
     probe,

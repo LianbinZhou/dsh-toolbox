@@ -68,6 +68,7 @@ export function createServiceDeps({ home, adapter, maxProtected = 200 } = {}) {
     maxProtected,
     nonce: () => randomBytes(16).toString('hex'),
     exists: (path) => existsSync(path),
+    shape: () => (adapter && typeof adapter.shape === 'function' ? adapter.shape() : undefined),
   }
 }
 
@@ -83,6 +84,7 @@ export function createArchiveApi(options) {
     deps,
     api: {
       list: () => service.list(),
+      debug: () => (typeof deps.shape === 'function' ? deps.shape() : { reason: 'no shape()' }),
       unarchive: async (id) => {
         const result = await service.unarchiveSession(id)
         return { ok: result?.ok !== false }

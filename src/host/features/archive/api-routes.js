@@ -89,11 +89,12 @@ export function createApiHandlers({ guard, peerOf, api }) {
         req.resume()
         return
       }
+      const wantsDebug = String(req.url || '').includes('debug=1')
       Promise.resolve()
         .then(() => api.list())
         .then((result) => {
           const rows = Array.isArray(result?.rows) ? result.rows.slice(0, 500) : []
-          respond(res, 200, { ok: true, rows })
+          respond(res, 200, wantsDebug && typeof api.debug === 'function' ? { ok: true, rows, debug: api.debug() } : { ok: true, rows })
         })
         .catch((error) => {
           console.error('[dsh-toolbox] archive list failed', error)
