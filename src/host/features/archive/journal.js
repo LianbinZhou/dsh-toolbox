@@ -36,8 +36,10 @@ export const PHASES = ['deleting', 'trashed', 'cleaned', 'done']
 
 /** A lock older than this is a crash leftover. */
 const LOCK_STALE_MS = 10_000
-/** How long a writer waits for the lock before giving up. */
-const LOCK_WAIT_MS = 2_000
+/** How long a writer waits for the lock before giving up. Generous on purpose:
+ *  a two-process test under a loaded machine must not turn contention into a
+ *  false failure. */
+const LOCK_WAIT_MS = 10_000
 
 /** Sleep without spinning the CPU (`Atomics.wait` works on Node's main thread). */
 function sleepSync(ms) {
