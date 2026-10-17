@@ -19,6 +19,10 @@ import { Config, isOn, readConfig } from './config.js'
 import { install as installSessionSearch } from './features/session-search.js'
 import { createArchiveHttpLifecycle } from './features/archive/host-feature.js'
 import { createTokenRegistry } from './features/archive/token-route.js'
+import { createSessionAdapter, adapterIsUsable } from './features/archive/session-adapter.js'
+import { createArchiveApi } from './features/archive/service-deps.js'
+import { dshHome } from './features/archive/paths.js'
+import { join } from 'node:path'
 
 export { Config, isOn, readConfig }
 export const name = 'dsh-toolbox'
@@ -87,8 +91,31 @@ export function archiveOrigins(webServer) {
 export function apply(ctx, config) {
   let offTool
   let archiveHttp = null
-  // Set by the host once a session adapter exists (see createArchiveApi).
-  const archiveApi = typeof config?.__archiveApi === 'object' ? config.__archiveApi : null
+  /**
+   * The real API surface (service + deps) is built ONCE, lazily, and only when the
+   * profile actually exposes a workspaceRegistry. Without it the archive feature
+   * stays off rather than half-working.
+   */
+  let archiveApi = null
+  const ensureArchiveApi = () => {
+    if (archiveApi !== null) return archiveApi
+    const serviceOf = (name) => {
+      try {
+        return typeof ctx.get === 'function' ? ctx.get(name) : undefined
+      } catch (error) {
+        return undefined
+      }
+    }
+    const adapter = createSessionAdapter({ registry: serviceOf('workspaceRegistry'), sessions: serviceOf('sessions') })
+    if (!adapterIsUsable(adapter)) return null
+    try {
+      archiveApi = createArchiveApi({ home: join(dshHome(), 'storages'), adapter }).api
+    } catch (error) {
+      console.error('[dsh-toolbox] building the archive service failed; the HTTP api stays off', error)
+      return null
+    }
+    return archiveApi
+  }
   const archiveRegistry = createTokenRegistry()
 
   /**
@@ -119,12 +146,12 @@ export function apply(ctx, config) {
         // The HTTP layer is complete; the session adapter is what still has to be
         // bound to a real profile service. Until then the route answers honestly
         // instead of pretending to delete.
-        api: archiveApi || {
-          list: () => ({ ok: false, rows: [] }),
-          unarchive: () => ({ ok: false }),
-          delete: () => ({ ok: false, status: 503, reason: 'archive-session-adapter-unavailable' }),
+        api: ensureArchiveApi(),
+        onDelete: (id) => {
+          const api = ensureArchiveApi()
+          if (api === null) return { ok: false, status: 503, reason: 'archive-session-adapter-unavailable' }
+          return api.delete(id)
         },
-        onDelete: (id) => archiveApi.delete(id),
       })
     }
     const state = archiveHttp.sync()
