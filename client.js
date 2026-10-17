@@ -1,3 +1,4 @@
+"use strict";
 (() => {
   // src/client/runtime.js
   var runtime;

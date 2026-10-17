@@ -89,6 +89,26 @@ if (mine.length === 0) {
   fail('no artifact for this package — does package.json export ./typert?')
 }
 generator.writePackageArtifacts(root, mine)
+
+// Fail loud: "0 artifacts" must never look like success.
+import { readFileSync, statSync } from 'node:fs'
+import { join } from 'node:path'
+const required = ['lib/typert.host.js', 'lib/typert.host.d.ts', 'lib/typert.remote-client.js', 'lib/typert.remote-client.d.ts']
+for (const rel of required) {
+  const file = join(root, rel)
+  try {
+    const stat = statSync(file)
+    if (stat.size === 0) fail(rel + ' was written EMPTY')
+    if (rel.endsWith('.js')) {
+      const text = readFileSync(file, 'utf8')
+      if (!text.includes('echo')) fail(rel + ' does not mention echo — the method never reached the table')
+      if (!text.includes('Remote')) fail(rel + ' carries no Remote metadata')
+    }
+    console.log('  ok  ' + rel + '  ' + stat.size + ' B')
+  } catch (error) {
+    fail(rel + ' is missing after generation: ' + error.message)
+  }
+}
 console.log('')
 console.log('  wrote ' + mine.length + ' artifact(s) into lib/')
 
