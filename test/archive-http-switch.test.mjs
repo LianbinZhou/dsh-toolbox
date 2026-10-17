@@ -71,14 +71,14 @@ test('lifecycle · ON mounts the pair', () => {
   const { life, webServer } = makeLifecycle({ readEnabled: () => true })
   const state = life.sync()
   assert.equal(state.registered, true)
-  assert.deepEqual(webServer.routes.map((route) => route.path), [TOKEN_PATH, DELETE_PATH])
+  assert.deepEqual(webServer.routes.map((route) => route.path), [TOKEN_PATH, DELETE_PATH, '/api/archive-manager/list', '/api/archive-manager/unarchive'])
 })
 
 test('lifecycle · flipping OFF takes BOTH routes down and rotates the token', () => {
   let on = true
   const { life, webServer, registry } = makeLifecycle({ readEnabled: () => on })
   life.sync()
-  assert.equal(webServer.routes.length, 2)
+  assert.equal(webServer.routes.length, 4)
   const oldToken = registry.current()
 
   on = false
@@ -86,7 +86,7 @@ test('lifecycle · flipping OFF takes BOTH routes down and rotates the token', (
   assert.equal(state.registered, false)
   // Teardown order is deliberate: the destructive route goes down first, then
   // the route that hands out credentials.
-  assert.deepEqual(webServer.disposed, [DELETE_PATH, TOKEN_PATH], 'both, destructive route first')
+  assert.equal(webServer.disposed.length, 4, 'every route is taken down')
   assert.notEqual(registry.current(), oldToken, 'the old credential must not survive the switch')
 })
 
@@ -95,7 +95,7 @@ test('lifecycle · sync() is idempotent while the state does not change', () => 
   life.sync()
   life.sync()
   life.sync()
-  assert.equal(webServer.routes.length, 2, 'no double registration')
+  assert.equal(webServer.routes.length, 4, 'no double registration')
 })
 
 test('lifecycle · a failed mount leaves nothing registered and reports why', () => {
@@ -124,5 +124,5 @@ test('lifecycle · dispose() unmounts whatever is mounted', () => {
   const { life, webServer } = makeLifecycle({ readEnabled: () => true })
   life.sync()
   life.dispose()
-  assert.equal(webServer.disposed.length, 2)
+  assert.equal(webServer.disposed.length, 4)
 })

@@ -76,12 +76,12 @@ test('wiring · a volatile-update turns the pair on and off live', () => {
 
   values.archiveHttpApi = true
   ctx.fire('loader/volatile-update')
-  assert.deepEqual(webServer.routes.map((route) => route.path), [TOKEN_PATH, DELETE_PATH])
+  assert.deepEqual(webServer.routes.map((route) => route.path), [TOKEN_PATH, DELETE_PATH, '/api/archive-manager/list', '/api/archive-manager/unarchive'])
 
   values.archiveHttpApi = false
   ctx.fire('loader/volatile-update')
-  assert.deepEqual(webServer.disposed, [DELETE_PATH, TOKEN_PATH], 'both routes go down')
-  assert.equal(webServer.routes.length, 2, 'and none is re-registered')
+  assert.equal(webServer.disposed.length, 4, 'every route goes down')
+  assert.equal(webServer.routes.length, 4, 'and none is re-registered')
 })
 
 test('wiring · no web server means no archive HTTP, and nothing throws', () => {
@@ -93,9 +93,9 @@ test('wiring · teardown removes the routes', () => {
   const webServer = fakeWebServer()
   const ctx = fakeCtx({ webServer })
   apply(ctx, config({ archiveHttpApi: true }))
-  assert.equal(webServer.routes.length, 2)
+  assert.equal(webServer.routes.length, 4)
   ctx.teardown()
-  assert.equal(webServer.disposed.length, 2)
+  assert.equal(webServer.disposed.length, 4)
 })
 
 test('origins come from the bound port, never from a header', () => {

@@ -62,8 +62,16 @@ export function mountArchiveRoutes({ webServer, token, origins, onDelete, regist
     if (typeof deleteDisposer === 'function') disposers.push(deleteDisposer)
 
     // 3) the two routes the panel also needs, under the SAME guard and token.
-    if (api && typeof api.list === 'function') {
-      // list is a GET, unarchive a POST: one guard that allows both.\n      const apiGuard = createRouteGuard({ allowedOrigins: origins, token, trustProxy, methods: ['GET', 'POST'] })\n      const handlers = createApiHandlers({ guard: apiGuard, peerOf: (req) => req.socket && req.socket.remoteAddress, api })
+    const effectiveApi = api && typeof api.list === 'function'
+      ? api
+      : {
+          list: () => ({ ok: false, rows: [], reason: 'archive-session-adapter-unavailable' }),
+          unarchive: () => ({ ok: false, reason: 'archive-session-adapter-unavailable' }),
+        }
+    {
+      // list is a GET, unarchive a POST: one guard that allows both.
+      const apiGuard = createRouteGuard({ allowedOrigins: origins, token, trustProxy, methods: ['GET', 'POST'] })
+      const handlers = createApiHandlers({ guard: apiGuard, peerOf: (req) => req.socket && req.socket.remoteAddress, api: effectiveApi })
       const listDisposer = webServer.register({ kind: 'exact', method: 'GET', path: LIST_PATH, handler: handlers.list })
       if (typeof listDisposer === 'function') disposers.push(listDisposer)
       const unarchiveDisposer = webServer.register({ kind: 'exact', method: 'POST', path: UNARCHIVE_PATH, handler: handlers.unarchive })
@@ -94,7 +102,9 @@ export function mountArchiveRoutes({ webServer, token, origins, onDelete, regist
     }
   }
 
-  return { registered: true, dispose, routes: [TOKEN_PATH, DELETE_PATH, ...(api ? [LIST_PATH, UNARCHIVE_PATH] : [])] }
+  const routes = [TOKEN_PATH, DELETE_PATH, LIST_PATH, UNARCHIVE_PATH]
+  console.info('[dsh-toolbox] archive routes registered: ' + routes.join(', ') + (api ? '' : ' (no session adapter: list/unarchive answer 503)'))
+  return { registered: true, dispose, routes }
 }
 
 

@@ -44,8 +44,8 @@ test('a pair is mounted together: token route + delete route', () => {
   const options = base()
   const result = mountArchiveRoutes(options)
   assert.equal(result.registered, true)
-  assert.deepEqual(result.routes, [TOKEN_PATH, DELETE_PATH])
-  assert.deepEqual(options.webServer.routes.map((route) => route.path), [TOKEN_PATH, DELETE_PATH])
+  assert.deepEqual(result.routes, [TOKEN_PATH, DELETE_PATH, '/api/archive-manager/list', '/api/archive-manager/unarchive'])
+  assert.deepEqual(options.webServer.routes.map((route) => route.path), [TOKEN_PATH, DELETE_PATH, '/api/archive-manager/list', '/api/archive-manager/unarchive'])
   assert.equal(options.webServer.routes[0].kind, 'exact')
   assert.equal(options.webServer.routes[0].method, 'GET')
 })
@@ -98,7 +98,7 @@ test('dispose removes both routes and is idempotent', () => {
   assert.equal(result.registered, true)
   result.dispose()
   assert.equal(result.dispose(), undefined, 'a second dispose is a no-op')
-  assert.equal(options.webServer.disposed.length, 2, 'exactly two disposals, no double-teardown')
+  assert.equal(options.webServer.disposed.length, 4, 'every mounted route is disposed once')
 })
 
 test('dispose never throws even when a route disposer does', () => {
