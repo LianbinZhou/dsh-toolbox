@@ -83,9 +83,23 @@ export function mount(ctx, env) {
         null,
         view.rows.map((row) =>
           h('li', { key: row.id }, [
-            h('span', null, row.label),
+            h('span', { class: 'dsh-toolbox-archive-title' }, [
+              h('strong', null, row.label),
+              h('div', { class: 'dsh-toolbox-archive-id' }, row.id),
+            ]),
             h('button', { type: 'button', disabled: busy || !view.canDelete, onClick: run(() => panel.unarchive(row.id)) }, '恢复'),
-            h('button', { type: 'button', disabled: busy || !view.canDelete, onClick: run(() => panel.remove(row.id)) }, '删除'),
+            h(
+              'button',
+              {
+                type: 'button',
+                disabled: busy || !view.canDelete,
+                // Destructive actions are red. This is the browser default for
+                // danger, so no stylesheet has to be injected.
+                style: { color: '#b3261e', borderColor: '#b3261e', fontWeight: '600' },
+                onClick: run(() => panel.remove(row.id)),
+              },
+              '删除',
+            ),
           ]),
         ),
       ),

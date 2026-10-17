@@ -43,6 +43,7 @@ export const REASON_TEXT = Object.freeze({
  */
 export function createArchivePanel({ client, isEnabled }) {
   let rows = []
+  let titles = {}
   let state = 'idle' // idle | disabled | loading | ready | error
   let message = ''
 
@@ -100,7 +101,15 @@ export function createArchivePanel({ client, isEnabled }) {
       return Object.freeze({
         state,
         message,
-        rows: rows.map((row) => Object.freeze({ id: row.id, phase: row.phase, label: row.id.slice(0, 8) + '…' })),
+        rows: rows.map((row) =>
+          Object.freeze({
+            id: row.id,
+            phase: row.phase,
+            title: titles[row.id] || '',
+            // A title is what a human recognises; the id tail is only a fallback.
+            label: titles[row.id] || '会话 ' + String(row.id).slice(-8),
+          }),
+        ),
         canDelete: enabled(),
       })
     },

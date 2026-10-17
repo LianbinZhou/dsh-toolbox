@@ -1874,6 +1874,25 @@
         if (!result.response.ok) return { ok: false, status: result.status, reason: body?.reason ?? "request-failed" };
         return { ok: true, status: result.status };
       },
+      /**
+       * id -> title, from the loopback inventory the session-archive plugin serves.
+       * Read-only and same-origin; any failure degrades to an empty map so the panel
+       * still works.
+       */
+      async titleMap() {
+        try {
+          const response = await fetchImpl("/api/dsh-session-archive/inventory", { method: "GET", credentials: "same-origin" });
+          if (!response || response.ok !== true) return {};
+          const body = await response.json();
+          const out = {};
+          for (const row of Array.isArray(body?.rows) ? body.rows : []) {
+            if (row && typeof row.id === "string") out[row.id] = typeof row.title === "string" ? row.title : "";
+          }
+          return out;
+        } catch (error) {
+          return {};
+        }
+      },
       /** Ask for a token without deleting anything (used on panel open). */
       refresh,
       /** Diagnostics only: the token never leaves this module otherwise. */
@@ -1906,6 +1925,7 @@
   });
   function createArchivePanel({ client, isEnabled }) {
     let rows = [];
+    let titles = {};
     let state = "idle";
     let message = "";
     const enabled = () => {
@@ -1957,7 +1977,15 @@
         return Object.freeze({
           state,
           message,
-          rows: rows.map((row) => Object.freeze({ id: row.id, phase: row.phase, label: row.id.slice(0, 8) + "…" })),
+          rows: rows.map(
+            (row) => Object.freeze({
+              id: row.id,
+              phase: row.phase,
+              title: titles[row.id] || "",
+              // A title is what a human recognises; the id tail is only a fallback.
+              label: titles[row.id] || "会话 " + String(row.id).slice(-8)
+            })
+          ),
           canDelete: enabled()
         });
       },
@@ -2168,9 +2196,23 @@
           null,
           view.rows.map(
             (row) => h("li", { key: row.id }, [
-              h("span", null, row.label),
+              h("span", { class: "dsh-toolbox-archive-title" }, [
+                h("strong", null, row.label),
+                h("div", { class: "dsh-toolbox-archive-id" }, row.id)
+              ]),
               h("button", { type: "button", disabled: busy || !view.canDelete, onClick: run(() => panel.unarchive(row.id)) }, "恢复"),
-              h("button", { type: "button", disabled: busy || !view.canDelete, onClick: run(() => panel.remove(row.id)) }, "删除")
+              h(
+                "button",
+                {
+                  type: "button",
+                  disabled: busy || !view.canDelete,
+                  // Destructive actions are red. This is the browser default for
+                  // danger, so no stylesheet has to be injected.
+                  style: { color: "#b3261e", borderColor: "#b3261e", fontWeight: "600" },
+                  onClick: run(() => panel.remove(row.id))
+                },
+                "删除"
+              )
             ])
           )
         )

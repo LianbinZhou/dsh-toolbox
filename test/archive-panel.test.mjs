@@ -18,6 +18,9 @@ function fakeClient(script = {}) {
       calls.list += 1
       return script.list ?? { ok: true, rows: [{ id: 'session-aaaaaaaa-1111-2222-3333-444444444444', phase: 'archived' }] }
     },
+    async titleMap() {
+      return script.titles ?? {}
+    },
     async delete() {
       calls.delete += 1
       return script.delete ?? { ok: true, status: 200 }
@@ -110,4 +113,18 @@ test('panel · dispose clears state and the client', () => {
   assert.equal(client.calls.dispose, 1)
   assert.equal(panel.view().state, 'idle')
   assert.equal(panel.view().rows.length, 0)
+})
+
+test('panel · a session title is shown instead of the raw id', async () => {
+  const client = fakeClient({ titles: { 'session-aaaaaaaa-1111-2222-3333-444444444444': '插件汉化与整合方案' } })
+  const panel = createArchivePanel({ client, isEnabled: () => true })
+  await panel.refresh()
+  assert.equal(panel.view().rows[0].label, '插件汉化与整合方案')
+})
+
+test('panel · without a title the label falls back to the id tail', async () => {
+  const client = fakeClient({ titles: {} })
+  const panel = createArchivePanel({ client, isEnabled: () => true })
+  await panel.refresh()
+  assert.match(panel.view().rows[0].label, /会话 33334444/)
 })

@@ -218,6 +218,26 @@ export function createArchiveClient({ fetchImpl, base = () => '' } = {}) {
       return { ok: true, status: result.status }
     },
 
+    /**
+     * id -> title, from the loopback inventory the session-archive plugin serves.
+     * Read-only and same-origin; any failure degrades to an empty map so the panel
+     * still works.
+     */
+    async titleMap() {
+      try {
+        const response = await fetchImpl('/api/dsh-session-archive/inventory', { method: 'GET', credentials: 'same-origin' })
+        if (!response || response.ok !== true) return {}
+        const body = await response.json()
+        const out = {}
+        for (const row of Array.isArray(body?.rows) ? body.rows : []) {
+          if (row && typeof row.id === 'string') out[row.id] = typeof row.title === 'string' ? row.title : ''
+        }
+        return out
+      } catch (error) {
+        return {}
+      }
+    },
+
     /** Ask for a token without deleting anything (used on panel open). */
     refresh,
 
