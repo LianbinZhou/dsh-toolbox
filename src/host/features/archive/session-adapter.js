@@ -16,6 +16,7 @@
  *     refuses instead of removing something that may be open.
  */
 
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { dshHome, sessionsRootFor } from './paths.js'
 import { createFsProbe } from './probe.js'
@@ -27,7 +28,7 @@ import { createFsProbe } from './probe.js'
  * @param {string} [options.sessionsRoot]
  * @returns {object|null} the adapter, or null when the registry is missing
  */
-export function createSessionAdapter({ registry, sessions, sessionsRoot } = {}) {
+export function createSessionAdapter({ registry, sessions, sessionsRoot, storageFallback } = {}) {
   if (!registry || typeof registry !== 'object') return null
   if (typeof registry.unarchiveSession !== 'function') return null
 
@@ -50,13 +51,30 @@ export function createSessionAdapter({ registry, sessions, sessionsRoot } = {}) 
       console.warn('[dsh-toolbox] reading archivedSessionIds failed', error)
       return []
     }
-    if (ids === undefined || ids === null) return []
-    let list
+    let list = []
     if (Array.isArray(ids)) list = ids
     else if (ids instanceof Set) list = [...ids]
-    else if (typeof ids === 'object' && typeof ids[Symbol.iterator] === 'function') list = [...ids]
-    else return []
+    else if (ids && typeof ids[Symbol.iterator] === 'function') list = [...ids]
+
+    if (list.length === 0) {
+      // Fallback: the registry's getter answered empty while the persisted unit
+      // still holds the ids. Same data, read from the storage file it is written
+      // from, so a broken seam does not look like "no archived sessions".
+      list = typeof storageFallback === 'function' ? storageFallback() : readArchivedFromStorage()
+    }
     return list.map(String)
+  }
+
+  /** The persisted archive set, used only when the registry seam answers empty. */
+  function readArchivedFromStorage() {
+    try {
+      const file = join(dshHome(), 'storages', 'workspace.json')
+      const unit = JSON.parse(readFileSync(file, 'utf8'))
+      const ids = unit && unit.global && unit.global.archivedSessionIds
+      return Array.isArray(ids) ? ids : []
+    } catch (error) {
+      return []
+    }
   }
 
   const isLive = (id) => {
