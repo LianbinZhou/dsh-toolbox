@@ -2133,6 +2133,7 @@
     env.track(
       watchSwitches(ctx, (values) => {
         liveEnabled = values?.archiveHttpApi === true;
+        console.info("[dsh-toolbox] switch values =", values);
         console.info("[dsh-toolbox] archiveHttpApi =", liveEnabled);
       }, {})
     );
@@ -2196,7 +2197,8 @@
     const readEntries = () => {
       try {
         const list = typeof ctx.slots.entriesOfSlot === "function" ? ctx.slots.entriesOfSlot(PANEL_SLOT2) : void 0;
-        return Array.isArray(list) ? list.map((entry) => entry.key ?? entry.id) : "entriesOfSlot unavailable";
+        if (!Array.isArray(list)) return "entriesOfSlot unavailable";
+        return list.map((entry) => entry && entry.options ? entry.options.id : entry && (entry.id ?? entry.key));
       } catch (error) {
         return "threw: " + String(error && error.message);
       }

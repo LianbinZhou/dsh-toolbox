@@ -42,6 +42,7 @@ export function mount(ctx, env) {
   env.track(
     watchSwitches(ctx, (values) => {
       liveEnabled = values?.archiveHttpApi === true
+      console.info('[dsh-toolbox] switch values =', values)
       console.info('[dsh-toolbox] archiveHttpApi =', liveEnabled)
     }, {}),
   )
@@ -119,7 +120,9 @@ export function mount(ctx, env) {
   const readEntries = () => {
     try {
       const list = typeof ctx.slots.entriesOfSlot === 'function' ? ctx.slots.entriesOfSlot(PANEL_SLOT) : undefined
-      return Array.isArray(list) ? list.map((entry) => entry.key ?? entry.id) : 'entriesOfSlot unavailable'
+      if (!Array.isArray(list)) return 'entriesOfSlot unavailable'
+      // Entries carry their registration options; the id lives inside `options`.
+      return list.map((entry) => (entry && entry.options ? entry.options.id : entry && (entry.id ?? entry.key)))
     } catch (error) {
       return 'threw: ' + String(error && error.message)
     }
