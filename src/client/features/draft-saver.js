@@ -46,11 +46,32 @@ export function mount(ctx, env) {
     console.warn('[dsh-toolbox] draft guard not active: ' + handle.status + (handle.reason ? ' (' + handle.reason + ')' : ''))
   }
 
+  // E2E diagnostic: proves in the browser console whether the guard is live and
+  // what it did, instead of inferring it from `localStorage.setItem` identity.
+  try {
+    if (typeof window !== 'undefined') {
+      window.__DSH_TOOLBOX_DRAFT__ = {
+        status: handle.status,
+        patched: handle.patched,
+        mode: handle.mode,
+        active: () => handle.active,
+        ownSetItem: () => Object.prototype.hasOwnProperty.call(window.localStorage, 'setItem'),
+      }
+    }
+  } catch (error) {
+    /* a diagnostic must never break mounting */
+  }
+
   const dispose = () => {
     try {
       handle.dispose()
     } catch (error) {
       console.error('[dsh-toolbox] draft guard dispose failed', error)
+    }
+    try {
+      if (typeof window !== 'undefined' && window.__DSH_TOOLBOX_DRAFT__) delete window.__DSH_TOOLBOX_DRAFT__
+    } catch (error) {
+      /* ignore */
     }
   }
 

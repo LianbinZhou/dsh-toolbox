@@ -1023,11 +1023,27 @@
     if (handle.status !== "patched") {
       console.warn("[dsh-toolbox] draft guard not active: " + handle.status + (handle.reason ? " (" + handle.reason + ")" : ""));
     }
+    try {
+      if (typeof window !== "undefined") {
+        window.__DSH_TOOLBOX_DRAFT__ = {
+          status: handle.status,
+          patched: handle.patched,
+          mode: handle.mode,
+          active: () => handle.active,
+          ownSetItem: () => Object.prototype.hasOwnProperty.call(window.localStorage, "setItem")
+        };
+      }
+    } catch (error) {
+    }
     const dispose = () => {
       try {
         handle.dispose();
       } catch (error) {
         console.error("[dsh-toolbox] draft guard dispose failed", error);
+      }
+      try {
+        if (typeof window !== "undefined" && window.__DSH_TOOLBOX_DRAFT__) delete window.__DSH_TOOLBOX_DRAFT__;
+      } catch (error) {
       }
     };
     env.track(dispose);
