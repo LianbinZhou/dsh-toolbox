@@ -90,7 +90,10 @@ function fakeCtx(values) {
   const ctx = {
     get: (key) => (key === 'configForms' ? forms : undefined),
     effect: (fn) => fn(),
-    locale: {},
+    locale: {
+      register: () => () => {},
+      bind: () => (key) => key,
+    },
     slots: {
       inject: (key, callback) => {
         injected.push(key)

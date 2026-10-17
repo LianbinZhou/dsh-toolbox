@@ -14,6 +14,7 @@
  */
 
 import { defineFeatures } from './registry.js'
+import { mount as quoteReplyMount } from './features/quote-reply.js'
 
 /** One counter per mount, so the tests can assert mount counts. */
 export function createFeatureProbe() {
@@ -42,7 +43,9 @@ export function createFeatures(probe, host) {
       reversible: true,
       mount(ctx, env) {
         probe.bump('quote-reply')
-        track('quote-reply', env)
+        // The real feature: two slots plus two locale dictionaries, every effect
+        // registered through env.track so the switch removes all of them.
+        return quoteReplyMount(ctx, env)
       },
     },
     {
