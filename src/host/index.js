@@ -129,6 +129,7 @@ export function apply(ctx, config) {
    * host without a web server still gets every other feature.
    */
   const syncArchiveHttp = (reason) => {
+    console.info('[dsh-toolbox] archive sync (' + reason + ')')
     let webServer
     try {
       webServer = typeof ctx.get === 'function' ? ctx.get('webServer') : undefined
@@ -178,6 +179,19 @@ export function apply(ctx, config) {
       offTool = undefined
       console.info('[dsh-toolbox] session_search disposed (' + reason + ')')
     }
+  }
+
+  // webServer may not exist yet when apply runs: `ctx.get` would answer
+  // undefined exactly once and the routes would never be attempted. `inject`
+  // waits for the service and runs the callback in its scope.
+  try {
+    const disposeInject = ctx.inject(['webServer'], () => {
+      console.info('[dsh-toolbox] webServer became available; syncing the archive routes')
+      syncArchiveHttp('webServer-ready')
+    })
+    if (typeof disposeInject === 'function') ctx.effect(() => disposeInject, 'dsh-toolbox: webServer injection')
+  } catch (error) {
+    console.warn('[dsh-toolbox] ctx.inject([webServer]) failed: ' + (error && error.message))
   }
 
   ctx.effect(() => {
