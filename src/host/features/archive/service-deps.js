@@ -29,7 +29,7 @@ import { createArchiveService } from './service.js'
  * @param {string} options.home - `$DSH_HOME/storages` or a test directory
  * @param {object} options.adapter - { readArchived, isLive, probe, unarchive, dropWorkspaceRows, scrubCache }
  */
-export function createServiceDeps({ home, adapter, maxProtected = 200 } = {}) {
+export function createServiceDeps({ home, adapter, maxProtected = 200, ttlDays = 7 } = {}) {
   if (typeof home !== 'string' || home.length === 0) throw new TypeError('createServiceDeps needs a home directory')
   if (!adapter || typeof adapter.readArchived !== 'function') throw new TypeError('createServiceDeps needs a session adapter')
 
@@ -40,7 +40,11 @@ export function createServiceDeps({ home, adapter, maxProtected = 200 } = {}) {
   const journal = createFileJournal(base)
   const audit = createFileAudit(join(base, 'audit.jsonl'), { maxBytes: 256 * 1024 })
 
+  /** 垃圾箱保留天数：到期才由清理器物理清空。 */
+  const trashKeptDays = Number.isFinite(ttlDays) ? ttlDays : 7
+
   return {
+    trashKeptDays,
     readArchived: () => adapter.readArchived().map(String),
     isLive: (id) => adapter.isLive(id) === true,
     probe: (id) => adapter.probe(id),

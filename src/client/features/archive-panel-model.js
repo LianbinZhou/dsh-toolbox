@@ -44,6 +44,8 @@ export const REASON_TEXT = Object.freeze({
 export function createArchivePanel({ client, isEnabled }) {
   let rows = []
   let titles = {}
+  /** 待确认删除的会话；点「删除」先落到这里，再点「入回收箱」才真执行。 */
+  let pending = null
   let state = 'idle' // idle | disabled | loading | ready | error
   let message = ''
 
@@ -95,6 +97,21 @@ export function createArchivePanel({ client, isEnabled }) {
 
   return {
     refresh,
+    /** 点「删除」：只提问，不动数据。 */
+    askRemove(id) {
+      pending = id
+      message = ''
+    },
+    /** 确认移入回收箱。 */
+    async confirmRemove() {
+      const id = pending
+      pending = null
+      if (id === null) return { ok: false, reason: 'nothing-to-remove' }
+      return act('delete', id)
+    },
+    cancelRemove() {
+      pending = null
+    },
     unarchive: (id) => act('unarchive', id),
     remove: (id) => act('delete', id),
     /** What the container draws. Pure data: no DOM, no observers, no timers. */
@@ -112,6 +129,7 @@ export function createArchivePanel({ client, isEnabled }) {
           }),
         ),
         canDelete: enabled(),
+        pending,
       })
     },
     dispose() {

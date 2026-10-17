@@ -21,6 +21,7 @@ import { createArchiveHttpLifecycle } from './features/archive/host-feature.js'
 import { createTokenRegistry } from './features/archive/token-route.js'
 import { createSessionAdapter, adapterIsUsable } from './features/archive/session-adapter.js'
 import { createArchiveApi } from './features/archive/service-deps.js'
+import { sweepExpiredTrash } from './features/archive/trash-sweep.js'
 import { dshHome } from './features/archive/paths.js'
 import { join } from 'node:path'
 
@@ -132,7 +133,14 @@ export function apply(ctx, config) {
     }
     archiveApiReason = 'ready' + (adapter.readOnly ? ' (read-only)' : '')
     try {
-      archiveApi = createArchiveApi({ home: join(dshHome(), 'storages'), adapter }).api
+      const built = createArchiveApi({ home: join(dshHome(), 'storages'), adapter })
+      archiveApi = built.api
+      // 垃圾箱只在保留期到期后才物理清空，启动时扫一次。
+      void sweepExpiredTrash({ journal: built.deps.journal, service: built.service, ttlDays: 7 })
+        .then((r) => {
+          if (r && r.scanned > 0) console.info('[dsh-toolbox] 垃圾箱过期清理：扫描 ' + r.scanned + '，清空 ' + r.purged)
+        })
+        .catch((error) => console.warn('[dsh-toolbox] 垃圾箱清理失败', error))
     } catch (error) {
       archiveApiReason = 'createArchiveApi threw: ' + (error && (error.message || String(error)))
       console.error('[dsh-toolbox] building the archive service failed; the HTTP api stays off: ' + archiveApiReason, error)

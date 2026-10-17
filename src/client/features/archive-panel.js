@@ -119,6 +119,21 @@ export function mount(ctx, env) {
         h('span', { class: 'dsh-toolbox-archive-count' }, view.rows.length === 0 ? '共 0 条' : `共 ${view.rows.length} 条`),
       ]),
       view.message ? h('p', { class: 'dsh-toolbox-archive-note' }, view.message) : null,
+      view.pending
+        ? h('div', { class: 'dsh-toolbox-archive-confirm' }, [
+            h('span', null, '移入回收箱？可以随时恢复。'),
+            h(
+              'button',
+              {
+                type: 'button',
+                style: { color: '#b3261e', borderColor: '#b3261e', fontWeight: '600' },
+                onClick: run(() => panel.confirmRemove()),
+              },
+              '入回收箱',
+            ),
+            h('button', { type: 'button', onClick: () => { panel.cancelRemove(); sync() } }, '取消'),
+          ])
+        : null,
       view.rows.length === 0 && !view.message ? h('p', { class: 'dsh-toolbox-archive-empty' }, '没有归档会话') : null,
       h(
         'ul',
