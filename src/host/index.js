@@ -17,6 +17,8 @@
 
 import { Config, isOn, readConfig } from './config.js'
 import { install as installSessionSearch } from './features/session-search.js'
+import { createArchiveHttpLifecycle } from './features/archive/host-feature.js'
+import { createTokenRegistry } from './features/archive/token-route.js'
 
 export { Config, isOn, readConfig }
 export const name = 'dsh-toolbox'
@@ -66,8 +68,58 @@ export function makeGuard(config) {
  * @param config - the row config
  * @returns nothing — a plain object here is an `Invalid effect` crash
  */
+/**
+ * The origins the delete route will accept, derived from the address the host
+ * really bound. Never from a request header (that is the R0 bug).
+ */
+export function archiveOrigins(webServer) {
+  let port
+  try {
+    if (webServer && typeof webServer.port === 'number') port = webServer.port
+    else if (webServer && typeof webServer.address === 'function') port = webServer.address()?.port
+  } catch (error) {
+    port = undefined
+  }
+  const known = Number.isFinite(port) ? port : 3080
+  return ['http://127.0.0.1:' + known, 'http://localhost:' + known]
+}
+
 export function apply(ctx, config) {
   let offTool
+  let archiveHttp = null
+  const archiveRegistry = createTokenRegistry()
+
+  /**
+   * Mount/tear down the experimental HTTP archive API. Optional on purpose: a
+   * host without a web server still gets every other feature.
+   */
+  const syncArchiveHttp = (reason) => {
+    let webServer
+    try {
+      webServer = typeof ctx.get === 'function' ? ctx.get('webServer') : undefined
+    } catch (error) {
+      webServer = undefined
+    }
+    if (webServer === undefined || webServer === null || typeof webServer.register !== 'function') {
+      if (archiveHttp !== null) {
+        archiveHttp.dispose()
+        archiveHttp = null
+      }
+      return
+    }
+    if (archiveHttp === null) {
+      archiveHttp = createArchiveHttpLifecycle({
+        readEnabled: () => isOn(config, 'archiveHttpApi'),
+        registry: archiveRegistry,
+        webServer,
+        token: archiveRegistry.current(),
+        origins: archiveOrigins(webServer),
+        onDelete: () => ({ ok: false, status: 503, reason: 'archive-service-not-wired' }),
+      })
+    }
+    const state = archiveHttp.sync()
+    console.info('[dsh-toolbox] archive http api ' + (state.registered ? 'mounted' : 'off') + ' (' + reason + ')' + (state.reason ? ': ' + state.reason : ''))
+  }
 
   const sync = (reason) => {
     const want = isOn(config, 'sessionSearch')
@@ -86,8 +138,12 @@ export function apply(ctx, config) {
   }
 
   ctx.effect(() => {
-    const offEvent = ctx.on('loader/volatile-update', () => sync('volatile-update'))
+    const offEvent = ctx.on('loader/volatile-update', () => {
+      sync('volatile-update')
+      syncArchiveHttp('volatile-update')
+    })
     sync('apply')
+    syncArchiveHttp('apply')
     return () => {
       try {
         offEvent()
@@ -101,6 +157,14 @@ export function apply(ctx, config) {
           console.error('[dsh-toolbox] disposing session_search on teardown failed', error)
         }
         offTool = undefined
+      }
+      if (archiveHttp !== null) {
+        try {
+          archiveHttp.dispose()
+        } catch (error) {
+          console.error('[dsh-toolbox] disposing the archive http api failed', error)
+        }
+        archiveHttp = null
       }
     }
   }, 'dsh-toolbox: volatile switch drives session_search')
