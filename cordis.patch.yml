@@ -1,0 +1,15 @@
+# dsh-toolbox bundle patch: one row, six volatile switches.
+#
+# The settings form is rendered by this bundle's own client half, registered on
+# the `plugins.row.config` slot under the key `dsh-toolbox#toolbox`. There is no
+# automatic form: a row without a registered cell shows nothing at all.
+- insert:
+    - id: toolbox
+      name: 'dsh-toolbox'
+      config:
+        quoteReply: true
+        draftSaver: true
+        panelMenu: true
+        archivePanel: true
+        pluginZh: true
+        sessionSearch: true
