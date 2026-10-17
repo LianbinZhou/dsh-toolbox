@@ -28,9 +28,6 @@
   function useRef(...args) {
     return getRuntime().useRef(...args);
   }
-  function useSyncExternalStore(...args) {
-    return getRuntime().useSyncExternalStore(...args);
-  }
   function fragment() {
     return getRuntime().Fragment;
   }
@@ -2117,10 +2114,9 @@
   }
 
   // src/client/features/archive-panel.js
+  var PANEL_ID = "dsh-toolbox#archive";
+  var MAIN_SLOT = "main";
   var PANEL_SLOT2 = "sidebar.panellist";
-  var OVERLAY_SLOT3 = "shell.overlay";
-  var ROW_ID2 = "dsh-toolbox#archive";
-  var OVERLAY_ID = "dsh-toolbox#archive-overlay";
   function archiveApiEnabled() {
     try {
       return cacheSwitches()?.archiveHttpApi === true;
@@ -2128,84 +2124,69 @@
       return false;
     }
   }
-  function createOpenStore() {
-    let open = false;
-    const listeners2 = /* @__PURE__ */ new Set();
-    return {
-      isOpen: () => open,
-      subscribe(listener) {
-        listeners2.add(listener);
-        return () => listeners2.delete(listener);
-      },
-      set(value) {
-        open = value;
-        for (const listener of listeners2) listener();
-      }
-    };
-  }
   function mount4(ctx, env) {
     if (!ctx.slots || typeof ctx.slots.register !== "function" || typeof ctx.slots.inject !== "function") {
       throw new Error("dsh-toolbox: the slots service is unavailable");
     }
-    const store = createOpenStore();
     const client = createArchiveClient({ fetchImpl: (url, init) => fetch(url, init) });
     const panel = createArchivePanel({ client, isEnabled: archiveApiEnabled });
-    function Row() {
-      const open = useSyncExternalStore(store.subscribe, store.isOpen);
-      return h(
-        "button",
-        {
-          type: "button",
-          class: "dsh-toolbox-archive-row",
-          "aria-expanded": open ? "true" : "false",
-          onClick: () => store.set(!open)
-        },
-        "历史归档"
-      );
-    }
-    function Overlay() {
-      const open = useSyncExternalStore(store.subscribe, store.isOpen);
-      const [tick, setTick] = useState(0);
-      const view = panel.view();
+    function ArchiveView() {
+      const [view, setView] = useState(() => panel.view());
+      const [busy, setBusy] = useState(false);
+      const sync = () => setView(panel.view());
       useEffect(() => {
-        if (!open) return;
-        let live = true;
+        let live2 = true;
         void panel.refresh().then(() => {
-          if (live) setTick((value) => value + 1);
+          if (live2) sync();
         });
         return () => {
-          live = false;
+          live2 = false;
         };
-      }, [open]);
-      if (!open) return null;
-      const run = (action) => () => {
-        void action().then(() => setTick((value) => value + 1));
+      }, []);
+      const run = (action) => async () => {
+        setBusy(true);
+        await action();
+        if (live()) sync();
+        setBusy(false);
       };
-      return h("div", { class: "dsh-toolbox-archive", "data-tick": tick }, [
-        h("header", null, [
-          h("strong", null, "历史归档"),
-          h("button", { type: "button", onClick: () => store.set(false) }, "关闭")
-        ]),
-        view.state === "disabled" || view.message ? h("p", { class: "dsh-toolbox-archive-note" }, view.message) : null,
+      const live = () => true;
+      return h("div", { class: "dsh-toolbox-archive" }, [
+        h("header", null, [h("strong", null, "历史归档")]),
+        view.message ? h("p", { class: "dsh-toolbox-archive-note" }, view.message) : null,
+        view.rows.length === 0 && !view.message ? h("p", null, "没有归档会话") : null,
         h(
           "ul",
           null,
           view.rows.map(
             (row) => h("li", { key: row.id }, [
               h("span", null, row.label),
-              h("button", { type: "button", disabled: !view.canDelete, onClick: run(() => panel.unarchive(row.id)) }, "恢复"),
-              h("button", { type: "button", disabled: !view.canDelete, onClick: run(() => panel.remove(row.id)) }, "删除")
+              h("button", { type: "button", disabled: busy || !view.canDelete, onClick: run(() => panel.unarchive(row.id)) }, "恢复"),
+              h("button", { type: "button", disabled: busy || !view.canDelete, onClick: run(() => panel.remove(row.id)) }, "删除")
             ])
           )
         )
       ]);
     }
-    env.track(ctx.slots.inject(PANEL_SLOT2, () => ctx.slots.register({ name: PANEL_SLOT2, id: ROW_ID2, order: 200 }, Row)));
-    env.track(
-      ctx.slots.inject(OVERLAY_SLOT3, () => ctx.slots.register({ name: OVERLAY_SLOT3, id: OVERLAY_ID, order: 200 }, Overlay))
-    );
+    function SidebarRow() {
+      return h(
+        "button",
+        {
+          type: "button",
+          class: "dsh-toolbox-archive-row",
+          onClick: () => {
+            try {
+              ctx.layout.selectPanel(PANEL_ID);
+            } catch (error) {
+              console.error("[dsh-toolbox] selecting the archive panel failed", error);
+            }
+          }
+        },
+        "历史归档"
+      );
+    }
+    env.track(ctx.slots.inject(MAIN_SLOT, () => ctx.slots.register({ name: MAIN_SLOT, key: PANEL_ID }, ArchiveView)));
+    env.track(ctx.slots.inject(PANEL_SLOT2, () => ctx.slots.register({ name: PANEL_SLOT2, key: PANEL_ID }, SidebarRow)));
     return () => {
-      store.set(false);
       panel.dispose();
     };
   }
