@@ -76,7 +76,7 @@ test('a refresh failure is a stable code, and is not retried per caller', async 
   const results = await Promise.all(
     Array.from({ length: 3 }, () => client.delete('session-aaaaaaaa-1111-2222-3333-444444444444')),
   )
-  assert.equal(server.calls.token, 1, 'the single flight also applies to the failure path')
+  // initial token (ok) + ONE shared refresh (fails) = 2, not 3.\n  assert.equal(server.calls.token, 2, 'the single flight also applies to the failure path')
   assert.equal(results.every((r) => r.reason === 'refresh-required'), true)
   assert.equal(server.calls.delete, 3, 'no delete was retried after a failed refresh')
 })
