@@ -298,7 +298,13 @@ function originsFor(server, extraPorts = []) {
  * @param {boolean} [options.trustProxy]
  * @returns {{registered: boolean, reason?: string, dispose?: Function, token: string}}
  */
-export function registerArchiveRoutes({ webServer, onDelete, token, origins, trustProxy = false } = {}) {
+export function registerArchiveRoutes({ webServer, onDelete, token, origins, trustProxy = false, enabled = false } = {}) {
+  // The HTTP route is a BELT, not the plan: the UI uses the authenticated RPC
+  // channel. Mounting is therefore opt-in, and forgetting the flag keeps the
+  // endpoint closed rather than open.
+  if (enabled !== true) {
+    return { registered: false, reason: 'http route disabled by configuration', token: token || '' }
+  }
   if (!webServer || typeof webServer.register !== 'function') {
     return { registered: false, reason: 'no web server', token: token || '' }
   }

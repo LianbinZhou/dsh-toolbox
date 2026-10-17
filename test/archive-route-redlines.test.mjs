@@ -264,7 +264,7 @@ async function serveCapturedRegistration(registerOptions) {
     webServer,
     token: registerOptions.token,
     origins: registerOptions.origins ?? ['http://127.0.0.1:' + port, 'http://localhost:' + port],
-    onDelete: registerOptions.onDelete,
+    onDelete: registerOptions.onDelete, enabled: registerOptions.enabled ?? true,
   })
   return { server, port, registration, isClosed: () => closed }
 }
@@ -312,15 +312,15 @@ test('P1-6 · registration fails closed without a token or origins', async () =>
   const captured = []
   const webServer = { register: (route) => { captured.push(route); return () => {} } }
 
-  const noToken = registerArchiveRoutes({ webServer, token: '', origins: ['http://127.0.0.1:3080'] })
+  const noToken = registerArchiveRoutes({ webServer, token: '', origins: ['http://127.0.0.1:3080'], enabled: true })
   assert.equal(noToken.registered, false)
   assert.match(noToken.reason, /token/)
 
-  const noOrigins = registerArchiveRoutes({ webServer, token: TOKEN, origins: [] })
+  const noOrigins = registerArchiveRoutes({ webServer, token: TOKEN, origins: [], enabled: true })
   assert.equal(noOrigins.registered, false)
   assert.match(noOrigins.reason, /origins/)
 
-  const noServer = registerArchiveRoutes({ webServer: null, token: TOKEN, origins: ['http://127.0.0.1:3080'] })
+  const noServer = registerArchiveRoutes({ webServer: null, token: TOKEN, origins: ['http://127.0.0.1:3080'], enabled: true })
   assert.equal(noServer.registered, false)
 
   assert.equal(captured.length, 0, 'nothing may be registered when the guard cannot be built')

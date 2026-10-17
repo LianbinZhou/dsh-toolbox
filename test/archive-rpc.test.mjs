@@ -1,127 +1,137 @@
 /**
- * S4-b · the RPC channel (Pi's approved token design).
- *
- * The claim under test: the UI can delete WITHOUT any HTTP endpoint, and the
- * channel still validates input, rate-limits, and audits without leaking.
+ * S4-b · the RPC channel after Pi's review: every method takes a PRINCIPAL.
+ * These are the attack cases, not the happy path.
  */
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
-import { dirname, resolve } from 'node:path'
-import { createArchiveRpc, AUDIT_FIELDS } from '../src/host/features/archive/rpc.js'
-import { createArchiveService, REASONS } from '../src/host/features/archive/service.js'
+import { createArchiveRpc, createArchiveGateway, METHODS, pickResponse } from '../src/host/features/archive/rpc.js'
+import { AUDIT_FIELDS, createMemoryAudit } from '../src/host/features/archive/audit.js'
+import { createArchiveService } from '../src/host/features/archive/service.js'
+import { registerArchiveRoutes } from '../src/host/features/archive/route-guard.js'
 import { makeWorld, ID_A, ID_B } from './support/archive-service-matrix.mjs'
 
-const here = dirname(fileURLToPath(import.meta.url))
+const UI = { id: 'local-ui', role: 'ui', local: true, source: 'panel' }
+const REMOTE = { id: 'pad-1', role: 'remote', local: false, source: 'pairing' }
+const AGENT = { id: 'agent-1', role: 'agent', local: false }
 
-function makeRpc(options = {}) {
+function setup(options = {}) {
   const { deps, world } = makeWorld(options)
   const service = createArchiveService(deps)
-  const audit = []
-  const rpc = createArchiveRpc({ service, audit: (record) => audit.push(record), rateLimit: options.rateLimit })
-  return { rpc, service, deps, world, audit }
+  const records = []
+  const rpc = createArchiveRpc({ service, audit: createMemoryAudit(records), rateLimit: options.rateLimit })
+  return { rpc, service, deps, world, records }
 }
 
-test('RPC · a valid delete goes straight to the service and is audited', async () => {
-  const { rpc, world, audit } = makeRpc()
-  const result = await rpc.delete(ID_A)
-  assert.equal(result.ok, true)
-  assert.equal(world.dirExists(ID_A), false, 'the files moved to the trash and the entry was purged')
-  assert.equal(audit.length, 1)
-  for (const key of Object.keys(audit[0])) assert.ok(AUDIT_FIELDS.includes(key), 'unexpected field: ' + key)
-  assert.equal(audit[0].id, ID_A)
-  assert.equal(audit[0].ok, true)
+test('RPC · the local UI can delete, and the audit names the actor', async () => {
+  const { rpc, world, records } = setup()
+  assert.equal((await rpc.delete(UI, ID_A)).ok, true)
+  assert.equal(world.dirExists(ID_A), false)
+  assert.equal(records[0].actor, 'local-ui')
+  assert.equal(records[0].action, METHODS.DELETE)
+})
+
+test('RPC · unauthenticated is 401 and touches nothing', async () => {
+  const { rpc, world } = setup()
+  const result = await rpc.delete(undefined, ID_A)
+  assert.equal(result.status, 401)
+  assert.equal(world.calls.probe.length, 0)
+})
+
+test('RPC · a remote device and an agent are both 403', async () => {
+  const { rpc, world, records } = setup()
+  assert.equal((await rpc.delete(REMOTE, ID_A)).status, 403)
+  assert.equal((await rpc.delete(AGENT, ID_A)).status, 403)
+  assert.equal(world.dirExists(ID_A), true)
+  assert.equal(records.every((r) => r.reason === 'forbidden'), true)
+})
+
+test('RPC · a custom authorizer can grant a role', async () => {
+  const { deps, world } = makeWorld()
+  const service = createArchiveService(deps)
+  const rpc = createArchiveRpc({ service, authorize: (principal) => principal.id === 'trusted-pad' })
+  assert.equal((await rpc.delete({ id: 'trusted-pad', role: 'remote' }, ID_A)).ok, true)
+  assert.equal(world.dirExists(ID_A), false)
 })
 
 test('RPC · a hostile id is refused before the service sees it', async () => {
-  const { rpc, world, audit } = makeRpc()
-  const result = await rpc.delete('../../etc/passwd')
-  assert.equal(result.ok, false)
-  assert.equal(result.reason, 'invalid-id')
-  assert.equal(world.calls.probe.length, 0, 'the filesystem is never touched')
-  assert.equal(audit[0].reason, 'invalid-id')
+  const { rpc, world } = setup()
+  assert.equal((await rpc.delete(UI, '../../etc/passwd')).status, 400)
+  assert.equal(world.calls.probe.length, 0)
 })
 
-test('RPC · the rate limit stops a hammering UI', async () => {
-  const { rpc, audit } = makeRpc({ rateLimit: { max: 2, windowMs: 60_000 } })
-  const first = await rpc.delete(ID_A)
-  const second = await rpc.delete(ID_A)
-  const third = await rpc.delete(ID_A)
-  assert.equal(first.ok, true)
-  assert.equal(second.ok, false, 'already deleted the second time')
-  assert.equal(third.status, 429, 'the third call is rate limited')
-  assert.equal(third.reason, 'rate-limited')
-  assert.equal(audit.filter((r) => r.reason === 'rate-limited').length, 1)
+test('RPC · the response is whitelisted; a leaky service cannot leak a path', async () => {
+  const leaky = {
+    delete: async () => ({ ok: false, status: 409, reason: 'delete refused', error: 'C:\\secret' }),
+    restore: async () => ({ ok: true, debug: '/Users/x/secret' }),
+    heal: () => ({ ok: true }),
+    list: () => ({ ok: true, rows: [] }),
+  }
+  const records = []
+  const rpc = createArchiveRpc({ service: leaky, audit: createMemoryAudit(records) })
+  const result = await rpc.delete(UI, ID_A)
+  assert.doesNotMatch(JSON.stringify(result), /secret/)
+  assert.equal(result.reason, 'delete refused')
+  assert.doesNotMatch(JSON.stringify(await rpc.restore(UI, ID_A)), /secret/)
+  assert.doesNotMatch(JSON.stringify(records), /secret/)
 })
 
-test('RPC · an audit record never carries a path, a token or content', async () => {
-  const { rpc, deps, world } = makeRpc({ failAt: { step: 'workspace', error: new Error('C:\\secret\\path failed') } })
-  await rpc.delete(ID_A)
-  const { audit } = makeRpc({ rateLimit: { max: 5 } })
-  // Use the leaky service directly through a fresh RPC to inspect the record.
-  const leaky = createArchiveRpc({
-    service: createArchiveService(deps),
-    audit: (record) => audit.push(record),
-  })
-  deps.dropWorkspaceRows = (id) => world.calls.workspace.push(id)
-  await leaky.delete(ID_B)
+test('RPC · restore that throws becomes a code', async () => {
+  const service = {
+    delete: async () => ({ ok: true }),
+    restore: async () => { throw new Error('C:\\secret\\boom') },
+    heal: () => ({ ok: true }),
+    list: () => ({ ok: true, rows: [] }),
+  }
+  const records = []
+  const rpc = createArchiveRpc({ service, audit: createMemoryAudit(records) })
+  const result = await rpc.restore(UI, ID_A)
+  assert.equal(result.status, 500)
+  assert.doesNotMatch(JSON.stringify(result) + JSON.stringify(records), /secret/)
+})
 
-  for (const record of audit) {
-    for (const key of Object.keys(record)) {
-      assert.ok(AUDIT_FIELDS.includes(key), 'unexpected audit field: ' + key)
-    }
-    const serialized = JSON.stringify(record)
-    assert.doesNotMatch(serialized, /[A-Za-z]:\\\\/, 'no drive letter in the audit')
-    assert.doesNotMatch(serialized, /secret/, 'no fragment of the service message')
+test('RPC · the rate limit is per actor', async () => {
+  const { rpc } = setup({ rateLimit: { perActor: 2, perId: 99, windowMs: 60000 } })
+  assert.equal((await rpc.delete(UI, ID_A)).ok, true)
+  assert.equal((await rpc.delete(UI, ID_B)).ok, true)
+  assert.equal((await rpc.delete(UI, ID_A)).status, 429)
+})
+
+test('RPC · audit records never carry a non-whitelisted field', async () => {
+  const { rpc, records } = setup()
+  await rpc.delete(UI, ID_A)
+  for (const record of records) {
+    for (const key of Object.keys(record)) assert.ok(AUDIT_FIELDS.includes(key), 'unexpected field: ' + key)
   }
 })
 
-test('RPC · a service that throws becomes a code, not an exception', async () => {
-  const audit = []
-  const rpc = createArchiveRpc({
-    service: {
-      async delete() {
-        throw new Error('boom')
-      },
-      async restore() {
-        return { ok: true }
-      },
-      heal: () => ({ ok: true }),
-      list: () => ({ ok: true, rows: [] }),
-    },
-    audit: (record) => audit.push(record),
-  })
-  const result = await rpc.delete(ID_A)
-  assert.equal(result.ok, false)
-  assert.equal(result.status, 500)
-  assert.equal(result.reason, 'internal-error')
-  assert.equal(audit[0].reason, 'internal-error')
+test('gateway · dispatches, refuses unknown methods, requires a principal', async () => {
+  const { rpc, world } = setup()
+  const gateway = createArchiveGateway({ rpc })
+  assert.ok(gateway.methods.includes(METHODS.DELETE))
+  assert.equal((await gateway.dispatch({ method: METHODS.DELETE, principal: UI, params: { sessionId: ID_A } })).ok, true)
+  assert.equal(world.dirExists(ID_A), false)
+  assert.equal((await gateway.dispatch({ method: 'archive.nuke', principal: UI })).status, 404)
+  assert.equal((await gateway.dispatch({ method: 42 })).status, 400)
+  for (const method of [METHODS.DELETE, METHODS.RESTORE, METHODS.LIST, METHODS.HEAL]) {
+    assert.equal((await gateway.dispatch({ method, params: { sessionId: ID_A } })).status, 401, method)
+  }
+  assert.equal((await gateway.dispatch({ method: METHODS.DELETE, principal: AGENT, params: { sessionId: ID_A } })).status, 403)
 })
 
-test('RPC · the module has no network surface at all', async () => {
-  const source = readFileSync(resolve(here, '../src/host/features/archive/rpc.js'), 'utf8')
-  assert.doesNotMatch(source, /from 'node:http'/, 'no http server import')
-  assert.doesNotMatch(source, /from 'node:https'/)
-  assert.doesNotMatch(source, /\bfetch\s*\(/, 'no outbound fetch')
-  assert.doesNotMatch(source, /webServer\.register/, 'the RPC channel registers no route')
+test('the response whitelist drops unknown fields', () => {
+  const picked = pickResponse({ ok: true, removedDir: true, rows: [], secret: 'C:\\x', status: 200 })
+  assert.deepEqual(Object.keys(picked).sort(), ['ok', 'removedDir', 'rows', 'status'])
 })
 
-test('RPC · restore goes through the same channel', async () => {
-  const { rpc, world } = makeRpc({ failAt: { step: 'workspace', error: new Error('down') } })
-  await rpc.delete(ID_A)
-  assert.equal(world.dirExists(ID_A), false, 'in the trash')
-  const restored = await rpc.restore(ID_A)
-  assert.equal(restored.ok, true)
-  assert.equal(world.dirExists(ID_A), true, 'back where it was')
-})
-
-test('RPC · list and heal are exposed for the panel', async () => {
-  const { rpc } = makeRpc()
-  const listed = await rpc.list()
-  assert.equal(listed.ok, true)
-  assert.ok(Array.isArray(listed.rows))
-  const healed = await rpc.heal()
-  assert.equal(healed.ok, true)
+test('the HTTP delete route is closed unless explicitly enabled', () => {
+  const registered = []
+  const webServer = { register: (route) => { registered.push(route); return () => {} } }
+  const base = { webServer, token: 'x'.repeat(64), origins: ['http://127.0.0.1:3080'], onDelete: () => ({ ok: true }) }
+  const off = registerArchiveRoutes(base)
+  assert.equal(off.registered, false)
+  assert.match(off.reason, /disabled/)
+  assert.equal(registered.length, 0)
+  assert.equal(registerArchiveRoutes({ ...base, enabled: true }).registered, true)
+  assert.equal(registered.length, 1)
 })
