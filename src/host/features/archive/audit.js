@@ -157,7 +157,7 @@ export function createAuditWriter({ sink, windowMs = 60_000, now = () => Date.no
     /** A real action, written immediately (truncated + whitelisted). */
     allow(entry) {
       rollIfNeeded(now())
-      sink(entry)
+      sink(pick(entry))
     },
     /** A refused request. Aggregated, never written one per request. */
     reject(entry) {
