@@ -2214,6 +2214,16 @@
       mainSlot: MAIN_SLOT,
       listSlot: PANEL_SLOT2,
       entries: readEntries,
+      open: () => {
+        const layout = (typeof ctx.get === "function" ? ctx.get("layout") : void 0) || ctx.layout;
+        if (!layout || typeof layout.selectPanel !== "function") return "no layout service";
+        try {
+          layout.selectPanel(PANEL_ID);
+          return "opened";
+        } catch (error) {
+          return "threw: " + String(error && error.message);
+        }
+      },
       apiEnabled: () => archiveApiEnabled()
     };
     return () => {

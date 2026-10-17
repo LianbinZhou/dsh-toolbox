@@ -115,7 +115,7 @@ export function mount(ctx, env) {
   console.info('[dsh-toolbox] registered main panel, disposer =', typeof mainReg)
   if (typeof mainReg === 'function') env.track(mainReg)
   // The sidebar entry that selects it.
-  // A LIST slot wants id; the main slot wants key. They are different registries.\n  const rowReg = ctx.slots.register({ name: PANEL_SLOT, id: PANEL_ID, order: 200, label: '历史归档' }, SidebarRow)
+  // A LIST slot wants id; the main slot wants key. They are different registries.\n  const rowReg = ctx.slots.inject(PANEL_SLOT, () => ctx.slots.register({ name: PANEL_SLOT, id: PANEL_ID, order: 200, label: '历史归档' }, SidebarRow))
   console.info('[dsh-toolbox] registered panellist row, disposer =', typeof rowReg)
   if (typeof rowReg === 'function') env.track(rowReg)
 
@@ -138,6 +138,16 @@ export function mount(ctx, env) {
     mainSlot: MAIN_SLOT,
     listSlot: PANEL_SLOT,
     entries: readEntries,
+    open: () => {
+      const layout = (typeof ctx.get === 'function' ? ctx.get('layout') : undefined) || ctx.layout
+      if (!layout || typeof layout.selectPanel !== 'function') return 'no layout service'
+      try {
+        layout.selectPanel(PANEL_ID)
+        return 'opened'
+      } catch (error) {
+        return 'threw: ' + String(error && error.message)
+      }
+    },
     apiEnabled: () => archiveApiEnabled(),
   }
 
