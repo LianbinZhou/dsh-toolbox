@@ -97,12 +97,16 @@ dsh-toolbox/
 ```sh
 npm install
 npm run build              # src/client/index.js -> client.js
-npm test                   # 106 项
+npm test                   # 207 项（含真实 Chromium 的 CORS 用例）
 node tools/prove-red.mjs   # 把同一套存储矩阵跑在旧实现上：应报 14 红
 ```
 
 `npm test` **故意不预先构建**：`build-fresh` 先读已提交的 `client.js`，再原地重建并逐字节比对，
 专门用来抓"改了源码忘了 build"。
+
+**真实浏览器 CORS 用例是可选的**：`test/browser-cors.test.mjs` 需要 Playwright，
+没装就 skip（不会假装通过）。装上才跑：
+`npm i --no-save playwright && npx playwright install chromium`（约 120 MB，需走代理）。
 
 `prove-red` 是测试的**反向证据**：它把同一套矩阵跑在 `test/fixtures/legacy-guard.mjs`（S3 之前那份 patch
 `Storage.prototype` 的实现）上，正常应有一片红。**如果哪天它全绿了，说明矩阵不再咬人**，工具会以退出码 1 报警。

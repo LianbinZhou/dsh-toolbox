@@ -83,8 +83,12 @@ test('P1-4 · no browser vector can delete without the token', { skip: SKIP }, a
     await page.evaluate((b) => window.__post({ 'content-type': 'text/plain' }, b), body)
 
     // 3. custom header present: preflighted; the preflight fails, so the POST
-    //    never leaves the browser.
-    await page.evaluate((b) => window.__post({ 'content-type': 'text/plain', [CSRF_HEADER]: '1' }, b), body)
+    //    never leaves the browser. (`CSRF_HEADER` lives in Node, so it is passed
+    //    into the page rather than referenced there.)
+    await page.evaluate(
+      (args) => window.__post({ 'content-type': 'text/plain', [args.header]: '1' }, args.body),
+      { header: CSRF_HEADER, body },
+    )
 
     // 4. sandboxed iframe → Origin: null.
     await page.evaluate(
