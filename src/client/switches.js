@@ -99,13 +99,19 @@ export function readSwitches(ctx, options = {}) {
 /**
  * Follow settings changes. Retries the binding until `configForms` exists, so a
  * late service still produces live switches.
+ *
+ * The retry is CAPPED: without a bound the loop would poll every 150 ms for the
+ * life of the page if the service never arrives. After the cap the watcher gives
+ * up once, loudly, instead of spinning forever.
+ *
  * @returns a disposer that cancels the retry loop and the subscription
  */
 export function watchSwitches(ctx, callback, options = {}) {
-  const { isCancelled = () => false } = options
+  const { isCancelled = () => false, retryMs = RETRY_MS, maxRetries = MAX_RETRIES } = options
   let stopped = false
   let unsubscribe
   let timer
+  let attempts = 0
 
   const stop = () => {
     stopped = true
@@ -125,7 +131,16 @@ export function watchSwitches(ctx, callback, options = {}) {
     if (stopped || isCancelled()) return
     const picked = pickForm(ctx)
     if (!picked || typeof picked.form.subscribe !== 'function') {
-      timer = setTimeout(bind, RETRY_MS)
+      attempts += 1
+      if (attempts >= maxRetries) {
+        console.warn(
+          '[dsh-toolbox] configForms never appeared after ' +
+            maxRetries +
+            ' attempts; live switch updates are disabled until the page reloads',
+        )
+        return
+      }
+      timer = setTimeout(bind, retryMs)
       return
     }
     try {
@@ -140,7 +155,8 @@ export function watchSwitches(ctx, callback, options = {}) {
         }
       })
     } catch (error) {
-      timer = setTimeout(bind, RETRY_MS)
+      attempts += 1
+      if (attempts < maxRetries) timer = setTimeout(bind, retryMs)
     }
   }
 

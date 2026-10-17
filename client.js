@@ -434,10 +434,11 @@
     });
   }
   function watchSwitches(ctx, callback, options = {}) {
-    const { isCancelled = () => false } = options;
+    const { isCancelled = () => false, retryMs = RETRY_MS, maxRetries = MAX_RETRIES } = options;
     let stopped = false;
     let unsubscribe;
     let timer;
+    let attempts = 0;
     const stop = () => {
       stopped = true;
       if (timer !== void 0) clearTimeout(timer);
@@ -454,7 +455,14 @@
       if (stopped || isCancelled()) return;
       const picked = pickForm(ctx);
       if (!picked || typeof picked.form.subscribe !== "function") {
-        timer = setTimeout(bind, RETRY_MS);
+        attempts += 1;
+        if (attempts >= maxRetries) {
+          console.warn(
+            "[dsh-toolbox] configForms never appeared after " + maxRetries + " attempts; live switch updates are disabled until the page reloads"
+          );
+          return;
+        }
+        timer = setTimeout(bind, retryMs);
         return;
       }
       try {
@@ -469,7 +477,8 @@
           }
         });
       } catch (error) {
-        timer = setTimeout(bind, RETRY_MS);
+        attempts += 1;
+        if (attempts < maxRetries) timer = setTimeout(bind, retryMs);
       }
     };
     bind();

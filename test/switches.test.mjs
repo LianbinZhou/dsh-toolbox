@@ -125,6 +125,28 @@ test('watchSwitches stops retrying once disposed', async () => {
   assert.equal(calls, 0)
 })
 
+test('P1-3: the watch retry is capped instead of polling forever', async () => {
+  installStorage()
+  // configForms never appears: every attempt returns undefined.
+  let reads = 0
+  const ctx = { get: () => { reads += 1; return undefined } }
+
+  const warnings = []
+  const originalWarn = console.warn
+  console.warn = (...args) => warnings.push(args.join(' '))
+
+  const stop = watchSwitches(ctx, () => {}, { isCancelled: () => false, retryMs: 5, maxRetries: 3 })
+
+  await new Promise((resolve) => setTimeout(resolve, 120))
+  console.warn = originalWarn
+  stop()
+
+  assert.ok(reads >= 3, 'it retried a few times')
+  assert.ok(reads <= 4, 'and then stopped: got ' + reads + ' reads')
+  assert.equal(warnings.length, 1, 'it complains once instead of spinning silently')
+  assert.match(warnings[0], /configForms never appeared/)
+})
+
 test('pickForm prefers the row id and falls back to the package ids', () => {
   const { ctx } = makeCtx(0, { quoteReply: true })
   const picked = pickForm(ctx)

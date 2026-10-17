@@ -19,7 +19,8 @@
     "README.md",
     "LICENSE",
     "locale/*.json",
-    "icon.svg"
+    "icon.svg",
+    "src"
   ],
   "scripts": {
     "build": "node tools/build.mjs",
@@ -27,6 +28,8 @@
     "prepack": "node tools/build.mjs && node --test"
   },
   "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.5",
+    "@deepseek-ai/schemastery": "^3.18.4",
     "esbuild": "0.28.2"
   },
   "peerDependencies": {
