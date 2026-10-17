@@ -104,6 +104,7 @@ export function apply(ctx, config) {
    * stays off rather than half-working.
    */
   let archiveApi = null
+  let archiveApiReason = 'not attempted'
   const ensureArchiveApi = () => {
     if (archiveApi !== null) return archiveApi
     const serviceOf = (name) => {
@@ -116,11 +117,20 @@ export function apply(ctx, config) {
     const registry = serviceOf('workspaceRegistry')
     const sessions = serviceOf('sessions')
     console.info('[dsh-toolbox] archive adapter probe: workspaceRegistry=' + (registry ? typeof registry : 'missing') + ', sessions=' + (sessions ? typeof sessions : 'missing'))
-    const adapter = createSessionAdapter({ registry, sessions })
-    if (!adapterIsUsable(adapter)) {
-      console.warn('[dsh-toolbox] archive adapter unusable; list/unarchive/delete answer 503')
+    let adapter = null
+    try {
+      adapter = createSessionAdapter({ registry, sessions })
+    } catch (error) {
+      archiveApiReason = 'createSessionAdapter threw: ' + (error && error.message)
+      console.warn('[dsh-toolbox] ' + archiveApiReason)
       return null
     }
+    if (!adapterIsUsable(adapter)) {
+      archiveApiReason = 'adapter unusable (registry=' + (registry ? 'object' : 'missing') + ', sessions=' + (sessions ? 'object' : 'missing') + ')'
+      console.warn('[dsh-toolbox] ' + archiveApiReason)
+      return null
+    }
+    archiveApiReason = 'ready' + (adapter.readOnly ? ' (read-only)' : '')
     try {
       archiveApi = createArchiveApi({ home: join(dshHome(), 'storages'), adapter }).api
     } catch (error) {
@@ -170,6 +180,7 @@ export function apply(ctx, config) {
         // bound to a real profile service. Until then the route answers honestly
         // instead of pretending to delete.
         api: wantedApi,
+        apiReason: () => archiveApiReason,
         onDelete: (id) => {
           const api = ensureArchiveApi()
           if (api === null) return { ok: false, status: 503, reason: 'archive-session-adapter-unavailable' }
@@ -203,7 +214,10 @@ export function apply(ctx, config) {
   try {
     const offServices = ctx.inject(['workspaceRegistry', 'sessions'], (scoped) => {
       if (scoped) sessionCtx = scoped
-      console.info('[dsh-toolbox] session services ready; building the archive adapter')
+      // The first API may have been built read-only before these services
+      // arrived. Drop it so the rebuild uses the real workspaceRegistry.
+      archiveApi = null
+      console.info('[dsh-toolbox] session services ready; rebuilding the archive adapter')
       syncArchiveHttp('services-ready')
     })
     if (typeof offServices === 'function') ctx.effect(() => offServices, 'dsh-toolbox: session services injection')

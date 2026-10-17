@@ -53,8 +53,10 @@ export function createSessionAdapter({ registry, sessions, sessionsRoot, storage
       else if (ids && typeof ids.get === 'function') ids = ids.get()
       else if (ids && typeof ids.current === 'function') ids = ids.current()
     } catch (error) {
-      console.warn('[dsh-toolbox] reading archivedSessionIds failed', error)
-      return []
+      // A throwing getter must NOT look like an empty archive set. Fall through
+      // to the persisted unit, which is the same data the registry writes.
+      console.warn('[dsh-toolbox] reading archivedSessionIds failed; falling back to storage', error)
+      ids = undefined
     }
     let list = []
     if (Array.isArray(ids)) list = ids
@@ -101,6 +103,7 @@ export function createSessionAdapter({ registry, sessions, sessionsRoot, storage
   }
 
   function readArchivedFromStorage() {
+    let empty = null
     for (const home of candidateHomes()) {
       const file = join(home, 'storages', 'workspace.json')
       if (!existsSync(file)) continue
@@ -108,6 +111,12 @@ export function createSessionAdapter({ registry, sessions, sessionsRoot, storage
         const unit = JSON.parse(readFileSync(file, 'utf8'))
         const ids = unit && unit.global && unit.global.archivedSessionIds
         if (Array.isArray(ids)) {
+          if (ids.length === 0) {
+            // A different DSH_HOME can contain an empty workspace.json. Keep
+            // looking: the real profile may be the next candidate.
+            if (empty === null) empty = { file, ids }
+            continue
+          }
           if (storageRoot !== file) {
             storageRoot = file
             console.info('[dsh-toolbox] archived ids read from ' + file + ' (' + ids.length + ')')
@@ -117,6 +126,13 @@ export function createSessionAdapter({ registry, sessions, sessionsRoot, storage
       } catch (error) {
         console.warn('[dsh-toolbox] reading ' + file + ' failed: ' + (error && error.message))
       }
+    }
+    if (empty !== null) {
+      if (storageRoot !== empty.file) {
+        storageRoot = empty.file
+        console.info('[dsh-toolbox] archived ids read from ' + empty.file + ' (0)')
+      }
+      return empty.ids
     }
     return []
   }

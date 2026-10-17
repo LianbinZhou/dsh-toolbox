@@ -83,3 +83,18 @@ test('adapter · an OBSERVABLE form of the getter is read too', () => {
   const adapter = createSessionAdapter({ registry: reg, sessions: {}, sessionsRoot: 'C:/tmp/sessions', storageFallback: () => [] })
   assert.deepEqual(adapter.readArchived(), [ID])
 })
+
+
+test('adapter · a THROWING getter falls back to the persisted unit, not an empty list', () => {
+  const broken = createSessionAdapter({
+    registry: {
+      get archivedSessionIds() {
+        throw new Error('cannot get property without inject')
+      },
+    },
+    sessions: {},
+    sessionsRoot: 'C:/tmp/sessions',
+    storageFallback: () => [ID],
+  })
+  assert.deepEqual(broken.readArchived(), [ID], 'a throwing seam must not look like an empty archive')
+})

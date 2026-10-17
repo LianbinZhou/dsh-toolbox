@@ -31,7 +31,7 @@ import { LIST_PATH, UNARCHIVE_PATH, createApiHandlers } from './api-routes.js'
  * @param {boolean} [options.trustProxy]
  * @returns {{registered: boolean, reason?: string, dispose: Function, routes: string[]}}
  */
-export function mountArchiveRoutes({ webServer, token, origins, onDelete, registry, api, enabled = false, trustProxy = false } = {}) {
+export function mountArchiveRoutes({ webServer, token, origins, onDelete, registry, api, apiReason, enabled = false, trustProxy = false } = {}) {
   const nothing = { registered: false, reason: 'not mounted', dispose() {}, routes: [] }
 
   if (enabled !== true) return { ...nothing, reason: 'archive http routes are disabled by configuration' }
@@ -67,6 +67,7 @@ export function mountArchiveRoutes({ webServer, token, origins, onDelete, regist
       : {
           list: () => ({ ok: false, rows: [], reason: 'archive-session-adapter-unavailable' }),
           unarchive: () => ({ ok: false, reason: 'archive-session-adapter-unavailable' }),
+          debug: () => ({ fallback: true, reason: typeof apiReason === 'function' ? apiReason() : 'no reason' }),
         }
     {
       // list is a GET, unarchive a POST: one guard that allows both.
@@ -119,7 +120,7 @@ export function mountArchiveRoutes({ webServer, token, origins, onDelete, regist
  *               the old token gets 401 instead of a working handle
  *   mount fails nothing stays registered; the reason is returned
  */
-export function createArchiveHttpLifecycle({ readEnabled, registry, webServer, token, origins, onDelete, trustProxy = false } = {}) {
+export function createArchiveHttpLifecycle({ readEnabled, registry, webServer, token, origins, onDelete, api, apiReason, trustProxy = false } = {}) {
   let mounted = null
 
   function wants() {
@@ -133,7 +134,7 @@ export function createArchiveHttpLifecycle({ readEnabled, registry, webServer, t
   function sync() {
     const want = wants()
     if (want && mounted === null) {
-      const result = mountArchiveRoutes({ webServer, token, origins, onDelete, registry, trustProxy, enabled: true })
+      const result = mountArchiveRoutes({ webServer, token, origins, onDelete, registry, api, apiReason, trustProxy, enabled: true })
       if (result.registered !== true) return { registered: false, reason: result.reason }
       mounted = result
       return { registered: true }
