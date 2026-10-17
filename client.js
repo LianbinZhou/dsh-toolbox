@@ -2117,8 +2117,10 @@
   var PANEL_ID = "dsh-toolbox#archive";
   var MAIN_SLOT = "main";
   var PANEL_SLOT2 = "sidebar.panellist";
+  var liveEnabled = null;
   function archiveApiEnabled() {
     try {
+      if (liveEnabled !== null) return liveEnabled;
       return cacheSwitches()?.archiveHttpApi === true;
     } catch (error) {
       return false;
@@ -2128,6 +2130,12 @@
     if (!ctx.slots || typeof ctx.slots.register !== "function" || typeof ctx.slots.inject !== "function") {
       throw new Error("dsh-toolbox: the slots service is unavailable");
     }
+    env.track(
+      watchSwitches(ctx, (values) => {
+        liveEnabled = values?.archiveHttpApi === true;
+        console.info("[dsh-toolbox] archiveHttpApi =", liveEnabled);
+      }, {})
+    );
     const client = createArchiveClient({ fetchImpl: (url, init) => fetch(url, init) });
     const panel = createArchivePanel({ client, isEnabled: archiveApiEnabled });
     function ArchiveView() {
@@ -2193,6 +2201,7 @@
         return "threw: " + String(error && error.message);
       }
     };
+    console.info("[dsh-toolbox] archive panel mounted; panellist entries =", readEntries());
     if (typeof window !== "undefined") window.__DSH_TOOLBOX_ARCHIVE__ = {
       mounted: true,
       panelId: PANEL_ID,

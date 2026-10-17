@@ -15,15 +15,18 @@
 import { h, useEffect, useState } from '../runtime.js'
 import { createArchiveClient } from './archive-client.js'
 import { createArchivePanel } from './archive-panel-model.js'
-import { cacheSwitches } from '../switches.js'
+import { cacheSwitches, watchSwitches } from '../switches.js'
 
 export const PANEL_ID = 'dsh-toolbox#archive'
 export const MAIN_SLOT = 'main'
 export const PANEL_SLOT = 'sidebar.panellist'
 
 /** Is the experimental HTTP api switched on right now? Fails closed. */
+let liveEnabled = null
+
 export function archiveApiEnabled() {
   try {
+    if (liveEnabled !== null) return liveEnabled
     return cacheSwitches()?.archiveHttpApi === true
   } catch (error) {
     return false
@@ -34,6 +37,14 @@ export function mount(ctx, env) {
   if (!ctx.slots || typeof ctx.slots.register !== 'function' || typeof ctx.slots.inject !== 'function') {
     throw new Error('dsh-toolbox: the slots service is unavailable')
   }
+
+  // A live subscription, so flipping the 7th switch is reflected without a reload.
+  env.track(
+    watchSwitches(ctx, (values) => {
+      liveEnabled = values?.archiveHttpApi === true
+      console.info('[dsh-toolbox] archiveHttpApi =', liveEnabled)
+    }, {}),
+  )
 
   const client = createArchiveClient({ fetchImpl: (url, init) => fetch(url, init) })
   const panel = createArchivePanel({ client, isEnabled: archiveApiEnabled })
@@ -113,6 +124,7 @@ export function mount(ctx, env) {
       return 'threw: ' + String(error && error.message)
     }
   }
+  console.info('[dsh-toolbox] archive panel mounted; panellist entries =', readEntries())
   if (typeof window !== 'undefined') window.__DSH_TOOLBOX_ARCHIVE__ = {
     mounted: true,
     panelId: PANEL_ID,
