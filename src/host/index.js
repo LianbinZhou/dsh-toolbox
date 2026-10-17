@@ -134,7 +134,8 @@ export function apply(ctx, config) {
     try {
       archiveApi = createArchiveApi({ home: join(dshHome(), 'storages'), adapter }).api
     } catch (error) {
-      console.error('[dsh-toolbox] building the archive service failed; the HTTP api stays off', error)
+      archiveApiReason = 'createArchiveApi threw: ' + (error && (error.message || String(error)))
+      console.error('[dsh-toolbox] building the archive service failed; the HTTP api stays off: ' + archiveApiReason, error)
       return null
     }
     return archiveApi
