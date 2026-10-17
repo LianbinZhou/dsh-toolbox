@@ -97,6 +97,7 @@ export function archiveOrigins(webServer) {
 export function apply(ctx, config) {
   let offTool
   let archiveHttp = null
+  let archiveHttpApi = undefined
   /**
    * The real API surface (service + deps) is built ONCE, lazily, and only when the
    * profile actually exposes a workspaceRegistry. Without it the archive feature
@@ -149,7 +150,16 @@ export function apply(ctx, config) {
       }
       return
     }
+    // The api object changes when the session services arrive late: the first
+    // mount happened with api=null, so the routes answer 503. Rebuild instead of
+    // reusing it.
+    const wantedApi = ensureArchiveApi()
+    if (archiveHttp !== null && archiveHttpApi !== wantedApi) {
+      archiveHttp.dispose()
+      archiveHttp = null
+    }
     if (archiveHttp === null) {
+      archiveHttpApi = wantedApi
       archiveHttp = createArchiveHttpLifecycle({
         readEnabled: () => isOn(config, 'archiveHttpApi'),
         registry: archiveRegistry,
@@ -159,7 +169,7 @@ export function apply(ctx, config) {
         // The HTTP layer is complete; the session adapter is what still has to be
         // bound to a real profile service. Until then the route answers honestly
         // instead of pretending to delete.
-        api: ensureArchiveApi(),
+        api: wantedApi,
         onDelete: (id) => {
           const api = ensureArchiveApi()
           if (api === null) return { ok: false, status: 503, reason: 'archive-session-adapter-unavailable' }
