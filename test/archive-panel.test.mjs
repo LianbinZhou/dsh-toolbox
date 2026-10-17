@@ -8,7 +8,7 @@
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createArchivePanel, REASON_TEXT } from '../src/client/features/archive-panel.js'
+import { createArchivePanel, REASON_TEXT } from '../src/client/features/archive-panel-model.js'
 
 function fakeClient(script = {}) {
   const calls = { list: 0, delete: 0, unarchive: 0, dispose: 0 }

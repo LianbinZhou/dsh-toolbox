@@ -1,114 +1,90 @@
 /**
- * S4-c · the archive panel (client).
+ * S4-c · the archive panel as a container feature.
  *
- * The old panel hacked the DOM: it inserted its own <style>, watched the document
- * with two MutationObservers, polled with setInterval, and owned a React root.
- * None of that exists here. This module is a STATE MACHINE returning a tree; the
- * container decides where to draw it.
+ * It registers ONE row in `sidebar.panellist` (the same slot the native panel
+ * rows use, so `panel-menu` sees it through the slot ledger with no DOM selector
+ * to keep in sync) and ONE overlay in `shell.overlay` for the list itself.
  *
- * Every request goes through one `createArchiveClient` instance, so the token
- * lives in exactly one closure and a 401 refreshes once for all callers.
- *
- * Three states the old panel never had, and the messages users actually need:
- *
- *   disabled  the 7th switch is off => NO request is made at all
- *   refused   401 after the single retry => "reload the page"
- *   missing   404 => the routes are not mounted => "turn the switch on"
- *   unavailable 503 => the host has no session adapter => not a user error
- *   live / trash-full / journal-corrupt => the service's own reason, phrased
+ * The previous plugin injected a plain DOM row (`class="dsham-entry"`) that
+ * `panel-menu` had to special-case. That coupling is gone: nothing here writes a
+ * class the menu has to know about.
  */
 
-/** The user-facing text for each refusal reason. One place, no scattered strings. */
-export const REASON_TEXT = Object.freeze({
-  'refresh-required': '需要刷新页面（凭证已失效）',
-  'token-unavailable': '拿不到凭证：请确认第 7 个开关已开启，然后刷新页面',
-  'network-error': '网络错误：宿主可能正在重启',
-  disposed: '面板已卸载，请刷新页面',
-  'archive-session-adapter-unavailable': '宿主还没接上会话服务，归档接口暂不可用',
-  live: '这个会话正在使用中，不能删除',
-  'not-archived': '这个会话已经不在归档列表里了',
-  'trash-full': '回收站已满：请先恢复或清理，再删除',
-  'journal-corrupt': '回收站状态文件损坏，已停止删除（请人工检查）',
-  'cross-device': '回收站和会话不在同一个磁盘，无法原子移动',
-  'unsafe-trash-root': '回收站位置不安全，已拒绝执行',
-  'claim-failed': '删除声明写入失败',
-  'http-404': '接口没有注册：请打开第 7 个开关',
-  'http-503': '服务未就绪',
-})
+import { createArchiveClient } from './archive-client.js'
+import { createArchivePanel } from './archive-panel-model.js'
+import { cacheSwitches } from '../switches.js'
 
-/**
- * @param {object} options
- * @param {object} options.client - createArchiveClient(...)
- * @param {() => boolean} options.isEnabled - the live 7th switch
- */
-export function createArchivePanel({ client, isEnabled }) {
-  let rows = []
-  let state = 'idle' // idle | disabled | loading | ready | error
-  let message = ''
+export const PANEL_SLOT = 'sidebar.panellist'
+export const OVERLAY_SLOT = 'shell.overlay'
 
-  const enabled = () => {
-    try {
-      return isEnabled() === true
-    } catch (error) {
-      return false
-    }
+/** Is the experimental HTTP api switched on right now? Fails closed. */
+export function archiveApiEnabled() {
+  try {
+    const values = cacheSwitches()
+    return values?.archiveHttpApi === true
+  } catch (error) {
+    return false
+  }
+}
+
+export function mount(ctx, env) {
+  const h = env.h
+  const slots = ctx.slots || (typeof ctx.get === 'function' ? ctx.get('slots') : null)
+  if (!slots || typeof slots.register !== 'function') {
+    throw new Error('dsh-toolbox: the slots service is unavailable')
   }
 
-  function phrase(reason) {
-    return REASON_TEXT[reason] ?? '操作失败：' + String(reason ?? 'unknown')
+  const client = createArchiveClient({
+    // Bound once: the client never reaches for a global itself.
+    fetchImpl: (url, init) => fetch(url, init),
+  })
+  const panel = createArchivePanel({ client, isEnabled: archiveApiEnabled })
+
+  // The overlay is only rendered while it is open; no timers, no observers.
+  let open = false
+  const listeners = new Set()
+  const notify = () => {
+    for (const listener of listeners) listener()
+  }
+  const toggle = () => {
+    open = !open
+    notify()
+    if (open) void panel.refresh()
   }
 
-  /** Load the list. Makes no request when the switch is off. */
-  async function refresh() {
-    if (!enabled()) {
-      state = 'disabled'
-      message = '归档 HTTP 接口未启用'
-      rows = []
-      return { ok: false, reason: 'disabled' }
-    }
-    state = 'loading'
-    const result = await client.list()
-    if (result.ok) {
-      rows = result.rows
-      state = 'ready'
-      message = ''
-      return { ok: true }
-    }
-    state = 'error'
-    message = phrase(result.reason)
-    return { ok: false, reason: result.reason }
-  }
+  const row = slots.register({ name: PANEL_SLOT, key: 'dsh-toolbox#archive' }, () =>
+    h('button', { type: 'button', class: 'dsh-toolbox-archive-row', onClick: toggle }, '历史归档'),
+  )
+  env.track(typeof row === 'function' ? row : () => row?.dispose?.())
 
-  async function act(kind, id) {
-    if (!enabled()) return { ok: false, reason: 'disabled' }
-    const result = kind === 'delete' ? await client.delete(id) : await client.unarchive(id)
-    if (!result.ok) {
-      message = phrase(result.reason)
-      return result
-    }
-    message = ''
-    await refresh()
-    return result
-  }
+  const overlay = slots.register({ name: OVERLAY_SLOT, key: 'dsh-toolbox#archive-overlay' }, () => {
+    if (!open) return null
+    const view = panel.view()
+    return h('div', { class: 'dsh-toolbox-archive' }, [
+      h('header', null, [h('strong', null, '历史归档'), h('button', { type: 'button', onClick: toggle }, '关闭')]),
+      view.state === 'disabled' ? h('p', null, view.message) : null,
+      view.message ? h('p', { class: 'dsh-toolbox-archive-error' }, view.message) : null,
+      h(
+        'ul',
+        null,
+        view.rows.map((rowView) =>
+          h('li', { key: rowView.id }, [
+            h('span', null, rowView.label),
+            h('button', { type: 'button', disabled: !view.canDelete, onClick: () => void panel.unarchive(rowView.id) }, '恢复'),
+            h('button', { type: 'button', disabled: !view.canDelete, onClick: () => void panel.remove(rowView.id) }, '删除'),
+          ]),
+        ),
+      ),
+    ])
+  })
+  env.track(typeof overlay === 'function' ? overlay : () => overlay?.dispose?.())
 
-  return {
-    refresh,
-    unarchive: (id) => act('unarchive', id),
-    remove: (id) => act('delete', id),
-    /** What the container draws. Pure data: no DOM, no observers, no timers. */
-    view() {
-      return Object.freeze({
-        state,
-        message,
-        rows: rows.map((row) => Object.freeze({ id: row.id, phase: row.phase, label: row.id.slice(0, 8) + '…' })),
-        canDelete: enabled(),
-      })
-    },
-    dispose() {
-      client.dispose()
-      rows = []
-      state = 'idle'
-      message = ''
-    },
+  return () => {
+    if (open) {
+      open = false
+      notify()
+    }
+    listeners.clear()
+    panel.dispose()
   }
 }

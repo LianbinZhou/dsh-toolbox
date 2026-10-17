@@ -17,6 +17,7 @@ import { defineFeatures } from './registry.js'
 import { mount as quoteReplyMount } from './features/quote-reply.js'
 import { mount as draftSaverMount } from './features/draft-saver.js'
 import { mount as panelMenuMount } from './features/panel-menu.js'
+import { mount as archivePanelMount } from './features/archive-panel.js'
 
 /** One counter per mount, so the tests can assert mount counts. */
 export function createFeatureProbe() {
@@ -81,7 +82,8 @@ export function createFeatures(probe, host) {
       reversible: false,
       mount(ctx, env) {
         probe.bump('archive-panel')
-        track('archive-panel', env)
+        // The real feature: one sidebar row + one overlay, both gone on dispose.
+        return archivePanelMount(ctx, env)
       },
     },
     {

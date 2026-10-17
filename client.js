@@ -274,16 +274,16 @@
   // src/client/registry.js
   function defineFeature(spec) {
     if (!spec || typeof spec !== "object") throw new TypeError("feature spec must be an object");
-    const { id, configKey, title, mount: mount4, reversible } = spec;
+    const { id, configKey, title, mount: mount5, reversible } = spec;
     if (typeof id !== "string" || id.length === 0) throw new TypeError("feature needs a string id");
     if (typeof configKey !== "string" || configKey.length === 0) {
       throw new TypeError("feature " + id + " needs a configKey");
     }
-    if (typeof mount4 !== "function") throw new TypeError("feature " + id + " needs mount()");
+    if (typeof mount5 !== "function") throw new TypeError("feature " + id + " needs mount()");
     if (typeof reversible !== "boolean") {
       throw new TypeError("feature " + id + " must declare reversible: true|false");
     }
-    return Object.freeze({ id, configKey, title: title ?? id, mount: mount4, reversible });
+    return Object.freeze({ id, configKey, title: title ?? id, mount: mount5, reversible });
   }
   function defineFeatures(list) {
     const ids = /* @__PURE__ */ new Set();
@@ -1699,76 +1699,275 @@
     return dispose;
   }
 
-  // src/client/features.js
-  function createFeatureProbe() {
-    const mounts = /* @__PURE__ */ new Map();
+  // src/client/features/archive-client.js
+  var TOKEN_PATH = "/api/archive-manager/token";
+  var DELETE_PATH = "/api/archive-manager/delete";
+  var LIST_PATH = "/api/archive-manager/list";
+  var UNARCHIVE_PATH = "/api/archive-manager/unarchive";
+  var CSRF_HEADER = "x-dsh-toolbox";
+  var TOKEN_HEADER = "x-dsh-toolbox-token";
+  var MIN_TOKEN_LENGTH = 32;
+  function createArchiveClient({ fetchImpl, base = () => "" } = {}) {
+    if (typeof fetchImpl !== "function") throw new TypeError("dsh-toolbox: createArchiveClient needs a fetch");
+    let token = null;
+    let inFlight = null;
+    let disposed = false;
+    let refreshes = 0;
+    function requireAlive() {
+      if (disposed) {
+        const error = new Error("archive client disposed");
+        error.code = "disposed";
+        throw error;
+      }
+    }
+    function refresh(force = false) {
+      requireAlive();
+      if (!force && typeof token === "string") return Promise.resolve(token);
+      if (inFlight !== null) return inFlight;
+      inFlight = (async () => {
+        try {
+          const response = await fetchImpl(base() + TOKEN_PATH, {
+            method: "GET",
+            headers: { [CSRF_HEADER]: "1" },
+            credentials: "same-origin",
+            cache: "no-store"
+          });
+          if (!response || response.ok !== true) throw new Error("token-unavailable");
+          const body = await response.json();
+          if (!body || typeof body.token !== "string" || body.token.length < MIN_TOKEN_LENGTH) {
+            throw new Error("token-unavailable");
+          }
+          token = body.token;
+          refreshes += 1;
+          return token;
+        } finally {
+          inFlight = null;
+        }
+      })();
+      return inFlight;
+    }
+    function post(sessionId, credential) {
+      return fetchImpl(base() + DELETE_PATH, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          [CSRF_HEADER]: "1",
+          [TOKEN_HEADER]: credential
+        },
+        credentials: "same-origin",
+        cache: "no-store",
+        body: JSON.stringify({ sessionId })
+      });
+    }
+    async function authorized(path, init) {
+      let credential;
+      try {
+        credential = token !== null ? token : await refresh();
+      } catch (error) {
+        return { status: 0, reason: "token-unavailable" };
+      }
+      const send = (value) => fetchImpl(base() + path, {
+        ...init,
+        headers: { ...init.headers ?? {}, [CSRF_HEADER]: "1", [TOKEN_HEADER]: value },
+        credentials: "same-origin",
+        cache: "no-store"
+      });
+      let response;
+      try {
+        response = await send(credential);
+      } catch (error) {
+        return { status: 0, reason: "network-error" };
+      }
+      if (response.status === 401) {
+        token = null;
+        let fresh;
+        try {
+          fresh = await refresh(true);
+        } catch (error) {
+          return { status: 401, reason: "refresh-required" };
+        }
+        try {
+          response = await send(fresh);
+        } catch (error) {
+          return { status: 0, reason: "network-error" };
+        }
+        if (response.status === 401) {
+          token = null;
+          return { status: 401, reason: "refresh-required" };
+        }
+      }
+      return { status: response.status, response };
+    }
+    async function readJson(response) {
+      try {
+        return await response.json();
+      } catch (error) {
+        return void 0;
+      }
+    }
     return {
-      bump(id) {
-        mounts.set(id, (mounts.get(id) ?? 0) + 1);
-        return mounts.get(id);
+      /** Delete one archived session. Never throws; every failure is a code. */
+      async delete(sessionId) {
+        if (disposed) return { ok: false, status: 0, reason: "disposed" };
+        let credential;
+        try {
+          credential = token !== null ? token : await refresh();
+        } catch (error) {
+          return { ok: false, status: 0, reason: "token-unavailable" };
+        }
+        let response;
+        try {
+          response = await post(sessionId, credential);
+        } catch (error) {
+          return { ok: false, status: 0, reason: "network-error" };
+        }
+        if (response.status === 401) {
+          token = null;
+          let fresh;
+          try {
+            fresh = await refresh(true);
+          } catch (error) {
+            return { ok: false, status: 401, reason: "refresh-required" };
+          }
+          try {
+            response = await post(sessionId, fresh);
+          } catch (error) {
+            return { ok: false, status: 0, reason: "network-error" };
+          }
+          if (response.status === 401) {
+            token = null;
+            return { ok: false, status: 401, reason: "refresh-required" };
+          }
+        }
+        const body = await readJson(response);
+        return {
+          ok: response.status === 200 && body?.ok !== false,
+          status: response.status,
+          reason: body?.reason ?? (response.ok ? void 0 : "request-failed")
+        };
       },
-      count(id) {
-        return mounts.get(id) ?? 0;
+      /** GET the archived rows. */
+      async list() {
+        if (disposed) return { ok: false, rows: [], reason: "disposed" };
+        const result = await authorized(LIST_PATH, { method: "GET" });
+        if (result.response === void 0) return { ok: false, rows: [], reason: result.reason };
+        if (result.status === 404) return { ok: false, rows: [], reason: "http-404" };
+        if (result.status === 503) return { ok: false, rows: [], reason: "http-503" };
+        const body = await readJson(result.response);
+        if (!result.response.ok || body?.ok === false) {
+          return { ok: false, rows: [], reason: body?.reason ?? "request-failed" };
+        }
+        return { ok: true, rows: Array.isArray(body?.rows) ? body.rows : [] };
+      },
+      /** Undo the archive flag. */
+      async unarchive(sessionId) {
+        if (disposed) return { ok: false, status: 0, reason: "disposed" };
+        const result = await authorized(UNARCHIVE_PATH, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ sessionId })
+        });
+        if (result.response === void 0) return { ok: false, status: 0, reason: result.reason };
+        if (result.status === 404) return { ok: false, status: 404, reason: "http-404" };
+        if (result.status === 503) return { ok: false, status: 503, reason: "http-503" };
+        const body = await readJson(result.response);
+        if (!result.response.ok) return { ok: false, status: result.status, reason: body?.reason ?? "request-failed" };
+        return { ok: true, status: result.status };
+      },
+      /** Ask for a token without deleting anything (used on panel open). */
+      refresh,
+      /** Diagnostics only: the token never leaves this module otherwise. */
+      stats: () => ({ hasToken: typeof token === "string", refreshes, inFlight: inFlight !== null }),
+      /** Drop the memory token and any in-flight refresh. */
+      dispose() {
+        disposed = true;
+        token = null;
+        inFlight = null;
       }
     };
   }
-  function createFeatures(probe, host) {
-    const track = (id, env) => {
-      env.track(host.addListener(id, () => {
-      }));
-    };
-    return defineFeatures([
-      {
-        id: "quote-reply",
-        configKey: "quoteReply",
-        title: "划词引用",
-        reversible: true,
-        mount(ctx, env) {
-          probe.bump("quote-reply");
-          return mount(ctx, env);
-        }
-      },
-      {
-        id: "panel-menu",
-        configKey: "panelMenu",
-        title: "面板收纳",
-        reversible: true,
-        mount(ctx, env) {
-          probe.bump("panel-menu");
-          return mount3(ctx, env);
-        }
-      },
-      {
-        id: "draft-saver",
-        configKey: "draftSaver",
-        title: "草稿保险箱",
-        reversible: false,
-        mount(ctx, env) {
-          probe.bump("draft-saver");
-          return mount2(ctx, env);
-        }
-      },
-      {
-        id: "archive-panel",
-        configKey: "archivePanel",
-        title: "历史归档",
-        reversible: false,
-        mount(ctx, env) {
-          probe.bump("archive-panel");
-          track("archive-panel", env);
-        }
-      },
-      {
-        id: "plugin-zh",
-        configKey: "pluginZh",
-        title: "插件汉化",
-        reversible: false,
-        mount(ctx, env) {
-          probe.bump("plugin-zh");
-          track("plugin-zh", env);
-        }
+
+  // src/client/features/archive-panel-model.js
+  var REASON_TEXT = Object.freeze({
+    "refresh-required": "需要刷新页面（凭证已失效）",
+    "token-unavailable": "拿不到凭证：请确认第 7 个开关已开启，然后刷新页面",
+    "network-error": "网络错误：宿主可能正在重启",
+    disposed: "面板已卸载，请刷新页面",
+    "archive-session-adapter-unavailable": "宿主还没接上会话服务，归档接口暂不可用",
+    live: "这个会话正在使用中，不能删除",
+    "not-archived": "这个会话已经不在归档列表里了",
+    "trash-full": "回收站已满：请先恢复或清理，再删除",
+    "journal-corrupt": "回收站状态文件损坏，已停止删除（请人工检查）",
+    "cross-device": "回收站和会话不在同一个磁盘，无法原子移动",
+    "unsafe-trash-root": "回收站位置不安全，已拒绝执行",
+    "claim-failed": "删除声明写入失败",
+    "http-404": "接口没有注册：请打开第 7 个开关",
+    "http-503": "服务未就绪"
+  });
+  function createArchivePanel({ client, isEnabled }) {
+    let rows = [];
+    let state = "idle";
+    let message = "";
+    const enabled = () => {
+      try {
+        return isEnabled() === true;
+      } catch (error) {
+        return false;
       }
-    ]);
+    };
+    function phrase(reason) {
+      return REASON_TEXT[reason] ?? "操作失败：" + String(reason ?? "unknown");
+    }
+    async function refresh() {
+      if (!enabled()) {
+        state = "disabled";
+        message = "归档 HTTP 接口未启用";
+        rows = [];
+        return { ok: false, reason: "disabled" };
+      }
+      state = "loading";
+      const result = await client.list();
+      if (result.ok) {
+        rows = result.rows;
+        state = "ready";
+        message = "";
+        return { ok: true };
+      }
+      state = "error";
+      message = phrase(result.reason);
+      return { ok: false, reason: result.reason };
+    }
+    async function act(kind, id) {
+      if (!enabled()) return { ok: false, reason: "disabled" };
+      const result = kind === "delete" ? await client.delete(id) : await client.unarchive(id);
+      if (!result.ok) {
+        message = phrase(result.reason);
+        return result;
+      }
+      message = "";
+      await refresh();
+      return result;
+    }
+    return {
+      refresh,
+      unarchive: (id) => act("unarchive", id),
+      remove: (id) => act("delete", id),
+      /** What the container draws. Pure data: no DOM, no observers, no timers. */
+      view() {
+        return Object.freeze({
+          state,
+          message,
+          rows: rows.map((row) => Object.freeze({ id: row.id, phase: row.phase, label: row.id.slice(0, 8) + "…" })),
+          canDelete: enabled()
+        });
+      },
+      dispose() {
+        client.dispose();
+        rows = [];
+        state = "idle";
+        message = "";
+      }
+    };
   }
 
   // src/client/switches.js
@@ -1912,6 +2111,146 @@
       storage.setItem(CACHE_KEY, JSON.stringify({ package: PACKAGE, rowId: ROW_ID, values: values || {} }));
     } catch (error) {
     }
+  }
+
+  // src/client/features/archive-panel.js
+  var PANEL_SLOT2 = "sidebar.panellist";
+  var OVERLAY_SLOT3 = "shell.overlay";
+  function archiveApiEnabled() {
+    try {
+      const values = cacheSwitches();
+      return values?.archiveHttpApi === true;
+    } catch (error) {
+      return false;
+    }
+  }
+  function mount4(ctx, env) {
+    const h2 = env.h;
+    const slots = ctx.slots || (typeof ctx.get === "function" ? ctx.get("slots") : null);
+    if (!slots || typeof slots.register !== "function") {
+      throw new Error("dsh-toolbox: the slots service is unavailable");
+    }
+    const client = createArchiveClient({
+      // Bound once: the client never reaches for a global itself.
+      fetchImpl: (url, init) => fetch(url, init)
+    });
+    const panel = createArchivePanel({ client, isEnabled: archiveApiEnabled });
+    let open = false;
+    const listeners2 = /* @__PURE__ */ new Set();
+    const notify = () => {
+      for (const listener of listeners2) listener();
+    };
+    const toggle = () => {
+      open = !open;
+      notify();
+      if (open) void panel.refresh();
+    };
+    const row = slots.register(
+      { name: PANEL_SLOT2, key: "dsh-toolbox#archive" },
+      () => h2("button", { type: "button", class: "dsh-toolbox-archive-row", onClick: toggle }, "历史归档")
+    );
+    env.track(typeof row === "function" ? row : () => row?.dispose?.());
+    const overlay = slots.register({ name: OVERLAY_SLOT3, key: "dsh-toolbox#archive-overlay" }, () => {
+      if (!open) return null;
+      const view = panel.view();
+      return h2("div", { class: "dsh-toolbox-archive" }, [
+        h2("header", null, [h2("strong", null, "历史归档"), h2("button", { type: "button", onClick: toggle }, "关闭")]),
+        view.state === "disabled" ? h2("p", null, view.message) : null,
+        view.message ? h2("p", { class: "dsh-toolbox-archive-error" }, view.message) : null,
+        h2(
+          "ul",
+          null,
+          view.rows.map(
+            (rowView) => h2("li", { key: rowView.id }, [
+              h2("span", null, rowView.label),
+              h2("button", { type: "button", disabled: !view.canDelete, onClick: () => void panel.unarchive(rowView.id) }, "恢复"),
+              h2("button", { type: "button", disabled: !view.canDelete, onClick: () => void panel.remove(rowView.id) }, "删除")
+            ])
+          )
+        )
+      ]);
+    });
+    env.track(typeof overlay === "function" ? overlay : () => overlay?.dispose?.());
+    return () => {
+      if (open) {
+        open = false;
+        notify();
+      }
+      listeners2.clear();
+      panel.dispose();
+    };
+  }
+
+  // src/client/features.js
+  function createFeatureProbe() {
+    const mounts = /* @__PURE__ */ new Map();
+    return {
+      bump(id) {
+        mounts.set(id, (mounts.get(id) ?? 0) + 1);
+        return mounts.get(id);
+      },
+      count(id) {
+        return mounts.get(id) ?? 0;
+      }
+    };
+  }
+  function createFeatures(probe, host) {
+    const track = (id, env) => {
+      env.track(host.addListener(id, () => {
+      }));
+    };
+    return defineFeatures([
+      {
+        id: "quote-reply",
+        configKey: "quoteReply",
+        title: "划词引用",
+        reversible: true,
+        mount(ctx, env) {
+          probe.bump("quote-reply");
+          return mount(ctx, env);
+        }
+      },
+      {
+        id: "panel-menu",
+        configKey: "panelMenu",
+        title: "面板收纳",
+        reversible: true,
+        mount(ctx, env) {
+          probe.bump("panel-menu");
+          return mount3(ctx, env);
+        }
+      },
+      {
+        id: "draft-saver",
+        configKey: "draftSaver",
+        title: "草稿保险箱",
+        reversible: false,
+        mount(ctx, env) {
+          probe.bump("draft-saver");
+          return mount2(ctx, env);
+        }
+      },
+      {
+        id: "archive-panel",
+        configKey: "archivePanel",
+        title: "历史归档",
+        reversible: false,
+        mount(ctx, env) {
+          probe.bump("archive-panel");
+          return mount4(ctx, env);
+        }
+      },
+      {
+        id: "plugin-zh",
+        configKey: "pluginZh",
+        title: "插件汉化",
+        reversible: false,
+        mount(ctx, env) {
+          probe.bump("plugin-zh");
+          track("plugin-zh", env);
+        }
+      }
+    ]);
   }
 
   // src/shared/switches.js
