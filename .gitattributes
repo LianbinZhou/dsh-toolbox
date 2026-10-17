@@ -1,0 +1,14 @@
+# Byte-for-byte reproducible artifacts.
+#
+# `client.js` is committed and `test/build-fresh.test.mjs` compares it byte for
+# byte against a fresh build. Git's line-ending conversion would rewrite it to
+# CRLF on a Windows clone, so the comparison failed on every fresh checkout even
+# though the committed blob was correct. Pin LF for text, and mark binaries so
+# nothing tries to "fix" them.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary
+*.zst binary
+*.tgz binary
