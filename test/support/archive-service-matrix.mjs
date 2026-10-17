@@ -136,7 +136,15 @@ export function makeWorld(options = {}) {
       calls.cache.push(id)
       failIf('cache')
     },
-    journal: { read: () => entries.map((e) => ({ ...e })), write: writeJournal },
+    journal: {
+      read: () => entries.map((e) => ({ ...e })),
+      write: writeJournal,
+      update: (mutate) => {
+        const next = mutate(entries.map((e) => ({ ...e })))
+        writeJournal(next)
+        return next
+      },
+    },
     nonce: () => 'nonce-' + (counter += 1) + '-abcdef0123456789',
     beforeStep: async (step, id) => {
       if (pauseAt.step === step && pauseAt.gate) await pauseAt.gate.promise

@@ -156,9 +156,7 @@ export function createArchiveService(deps) {
       return { ok: true, removedDir: true, reason: 'cleanup-pending', warning: 'deleted with warnings' }
     }
 
-    deps.journal.write(
-      deps.journal.read().map((current) => (current.id === id ? { ...current, phase: 'cleaned' } : current)),
-    )
+    deps.journal.update((entries) => entries.map((current) => (current.id === id ? { ...current, phase: 'cleaned' } : current)))
 
     try {
       deps.removeTree(entry.trashPath)
@@ -172,7 +170,7 @@ export function createArchiveService(deps) {
     // P0-1: a finished entry is REMOVED from the journal. Keeping a done
     // tombstone per deleted session makes the file grow without bound, and every
     // read/write parses and rewrites all of it.
-    deps.journal.write(withoutEntry(deps.journal, id))
+    deps.journal.update((entries) => entries.filter((entry) => entry.id !== id))
     return { ok: true, removedDir: true }
   }
 
@@ -262,7 +260,7 @@ export function createArchiveService(deps) {
         at: Date.now(),
       }
       try {
-        deps.journal.write([...withoutEntry(deps.journal, id), claim])
+        deps.journal.update((entries) => [...entries.filter((entry) => entry.id !== id), claim])
       } catch (error) {
         return { ok: false, status: 409, reason: REASONS.CLAIM_FAILED }
       }
@@ -271,11 +269,11 @@ export function createArchiveService(deps) {
 
       // D2: the state is re-verified AFTER the claim.
       if (!deps.readArchived().includes(id)) {
-        deps.journal.write(withoutEntry(deps.journal, id))
+        deps.journal.update((entries) => entries.filter((entry) => entry.id !== id))
         return { ok: false, status: 409, reason: REASONS.UNARCHIVED }
       }
       if (deps.isLive(id)) {
-        deps.journal.write(withoutEntry(deps.journal, id))
+        deps.journal.update((entries) => entries.filter((entry) => entry.id !== id))
         return { ok: false, status: 409, reason: REASONS.BECAME_LIVE }
       }
 
@@ -286,14 +284,14 @@ export function createArchiveService(deps) {
         fresh.identity?.dev === claim.dev &&
         fresh.identity?.ino === claim.ino
       if (!sameIdentity) {
-        deps.journal.write(withoutEntry(deps.journal, id))
+        deps.journal.update((entries) => entries.filter((entry) => entry.id !== id))
         return { ok: false, status: 409, reason: REASONS.IDENTITY_CHANGED }
       }
 
       try {
         deps.renamePath(claim.originalPath, claim.trashPath)
       } catch (error) {
-        deps.journal.write(withoutEntry(deps.journal, id))
+        deps.journal.update((entries) => entries.filter((entry) => entry.id !== id))
         return { ok: false, status: 500, reason: REASONS.MOVE_FAILED }
       }
 
@@ -320,11 +318,9 @@ export function createArchiveService(deps) {
           // P0-5: the adoption touches the journal and the trash, so it belongs
           // under the same per-id lock as delete/restore.
           await withLock(entry.id, async () => {
-            deps.journal.write(
-              deps.journal.read().map((current) =>
-                current.id === entry.id ? { ...current, phase: 'trashed', at: Date.now() } : current,
-              ),
-            )
+            deps.journal.update((entries) => entries.map((current) =>
+              current.id === entry.id ? { ...current, phase: 'trashed', at: Date.now() } : current,
+            ))
             const result = await finish(entry.id)
             if (result.ok && !result.warning) healed.push(entry.id)
             else pending.push(entry.id)
@@ -362,7 +358,7 @@ export function createArchiveService(deps) {
       } catch (error) {
         return { ok: false, status: 500, reason: REASONS.RESTORE_FAILED }
       }
-      deps.journal.write(withoutEntry(deps.journal, id))
+      deps.journal.update((entries) => entries.filter((entry) => entry.id !== id))
       return { ok: true, restored: true }
     })
   }
