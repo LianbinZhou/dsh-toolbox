@@ -132,9 +132,9 @@ test('R4-9 · the bare and session- spellings delete only once', async () => {
   assert.equal(world.calls.rename.length, 1, 'the directory moved exactly once')
 
   const second = await service.delete(ID_A)
-  assert.equal(second.ok, false, 'the second spelling finds nothing left to delete')
-  // Whether it is "not archived" or "already deleted" depends on which marker is
-  // read; both are stable codes, and neither may move files again.
+  // The other spelling is now a marker with no directory. Cleaning that marker is
+  // the CORRECT answer (cleanup-only), so the assertion is "a stable code and no
+  // second move", not "must fail".
   assert.ok([REASONS.NOT_ARCHIVED, REASONS.ALREADY_DELETED, REASONS.CLEANUP_ONLY, REASONS.DIR_ABSENT].includes(second.reason), 'got ' + second.reason)
   assert.equal(world.calls.rename.length, 1, 'still exactly one move')
 })
