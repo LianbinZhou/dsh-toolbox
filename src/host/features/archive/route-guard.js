@@ -75,7 +75,8 @@ export function createRouteToken() {
  * @param {boolean} [options.trustProxy] - accept proxy headers (only when a
  *        trusted local proxy is configured)
  */
-export function createRouteGuard({ allowedOrigins = [], token, trustProxy = false } = {}) {
+export function createRouteGuard({ allowedOrigins = [], token, trustProxy = false, methods = ['POST'] } = {}) {
+  const allowed = new Set((Array.isArray(methods) ? methods : ['POST']).map((m) => String(m).toUpperCase()))
   const origins = new Set(allowedOrigins.map(normalizeOrigin).filter(Boolean))
   const hosts = new Set([...origins].map((origin) => new URL(origin).host))
 
@@ -98,7 +99,7 @@ export function createRouteGuard({ allowedOrigins = [], token, trustProxy = fals
     if (method === 'OPTIONS') {
       return { ok: true, preflight: true }
     }
-    if (method !== 'POST') {
+    if (!allowed.has(method)) {
       return refuse(405, 'method not allowed')
     }
 

@@ -87,6 +87,8 @@ export function archiveOrigins(webServer) {
 export function apply(ctx, config) {
   let offTool
   let archiveHttp = null
+  // Set by the host once a session adapter exists (see createArchiveApi).
+  const archiveApi = typeof config?.__archiveApi === 'object' ? config.__archiveApi : null
   const archiveRegistry = createTokenRegistry()
 
   /**
@@ -114,7 +116,15 @@ export function apply(ctx, config) {
         webServer,
         token: archiveRegistry.current(),
         origins: archiveOrigins(webServer),
-        onDelete: () => ({ ok: false, status: 503, reason: 'archive-service-not-wired' }),
+        // The HTTP layer is complete; the session adapter is what still has to be
+        // bound to a real profile service. Until then the route answers honestly
+        // instead of pretending to delete.
+        api: archiveApi || {
+          list: () => ({ ok: false, rows: [] }),
+          unarchive: () => ({ ok: false }),
+          delete: () => ({ ok: false, status: 503, reason: 'archive-session-adapter-unavailable' }),
+        },
+        onDelete: (id) => archiveApi.delete(id),
       })
     }
     const state = archiveHttp.sync()

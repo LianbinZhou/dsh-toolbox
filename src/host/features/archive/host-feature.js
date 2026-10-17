@@ -17,7 +17,8 @@
  */
 
 import { TOKEN_PATH, createTokenEndpoint } from './token-route.js'
-import { DELETE_PATH, registerArchiveRoutes } from './route-guard.js'
+import { DELETE_PATH, createRouteGuard, registerArchiveRoutes } from './route-guard.js'
+import { LIST_PATH, UNARCHIVE_PATH, createApiHandlers } from './api-routes.js'
 
 /**
  * @param {object} options
@@ -30,7 +31,7 @@ import { DELETE_PATH, registerArchiveRoutes } from './route-guard.js'
  * @param {boolean} [options.trustProxy]
  * @returns {{registered: boolean, reason?: string, dispose: Function, routes: string[]}}
  */
-export function mountArchiveRoutes({ webServer, token, origins, onDelete, registry, enabled = false, trustProxy = false } = {}) {
+export function mountArchiveRoutes({ webServer, token, origins, onDelete, registry, api, enabled = false, trustProxy = false } = {}) {
   const nothing = { registered: false, reason: 'not mounted', dispose() {}, routes: [] }
 
   if (enabled !== true) return { ...nothing, reason: 'archive http routes are disabled by configuration' }
@@ -59,6 +60,15 @@ export function mountArchiveRoutes({ webServer, token, origins, onDelete, regist
     if (registration.registered !== true) throw new Error('delete route refused to register: ' + registration.reason)
     deleteDisposer = registration.dispose
     if (typeof deleteDisposer === 'function') disposers.push(deleteDisposer)
+
+    // 3) the two routes the panel also needs, under the SAME guard and token.
+    if (api && typeof api.list === 'function') {
+      // list is a GET, unarchive a POST: one guard that allows both.\n      const apiGuard = createRouteGuard({ allowedOrigins: origins, token, trustProxy, methods: ['GET', 'POST'] })\n      const handlers = createApiHandlers({ guard: apiGuard, peerOf: (req) => req.socket && req.socket.remoteAddress, api })
+      const listDisposer = webServer.register({ kind: 'exact', path: LIST_PATH, handler: handlers.list })
+      if (typeof listDisposer === 'function') disposers.push(listDisposer)
+      const unarchiveDisposer = webServer.register({ kind: 'exact', path: UNARCHIVE_PATH, handler: handlers.unarchive })
+      if (typeof unarchiveDisposer === 'function') disposers.push(unarchiveDisposer)
+    }
   } catch (error) {
     // Composite rollback: a half-mounted pair is worse than nothing mounted.
     for (const dispose of disposers.reverse()) {
@@ -84,7 +94,7 @@ export function mountArchiveRoutes({ webServer, token, origins, onDelete, regist
     }
   }
 
-  return { registered: true, dispose, routes: [TOKEN_PATH, DELETE_PATH] }
+  return { registered: true, dispose, routes: [TOKEN_PATH, DELETE_PATH, ...(api ? [LIST_PATH, UNARCHIVE_PATH] : [])] }
 }
 
 
