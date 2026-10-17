@@ -1,90 +1,123 @@
 /**
  * S4-c · the archive panel as a container feature.
  *
- * It registers ONE row in `sidebar.panellist` (the same slot the native panel
- * rows use, so `panel-menu` sees it through the slot ledger with no DOM selector
- * to keep in sync) and ONE overlay in `shell.overlay` for the list itself.
+ * Registration follows the SHAPE THAT ALREADY WORKS in this repo (quote-reply,
+ * the settings card): `ctx.slots.inject(SLOT, () => ctx.slots.register({name, id,
+ * order}, Component))`. A bare `slots.register({name, key})` mounts nothing —
+ * that was the bug that left the sidebar without an entry.
  *
- * The previous plugin injected a plain DOM row (`class="dsham-entry"`) that
- * `panel-menu` had to special-case. That coupling is gone: nothing here writes a
- * class the menu has to know about.
+ * Two slots, one shared store:
+ *   sidebar.panellist  the entry row
+ *   shell.overlay      the panel itself
+ *
+ * panel-menu sees the row through the slot ledger, so no DOM class has to exist.
  */
 
+import { h, useSyncExternalStore, useEffect, useState } from '../runtime.js'
 import { createArchiveClient } from './archive-client.js'
 import { createArchivePanel } from './archive-panel-model.js'
 import { cacheSwitches } from '../switches.js'
 
 export const PANEL_SLOT = 'sidebar.panellist'
 export const OVERLAY_SLOT = 'shell.overlay'
+export const ROW_ID = 'dsh-toolbox#archive'
+export const OVERLAY_ID = 'dsh-toolbox#archive-overlay'
 
 /** Is the experimental HTTP api switched on right now? Fails closed. */
 export function archiveApiEnabled() {
   try {
-    const values = cacheSwitches()
-    return values?.archiveHttpApi === true
+    return cacheSwitches()?.archiveHttpApi === true
   } catch (error) {
     return false
   }
 }
 
+function createOpenStore() {
+  let open = false
+  const listeners = new Set()
+  return {
+    isOpen: () => open,
+    subscribe(listener) {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    },
+    set(value) {
+      open = value
+      for (const listener of listeners) listener()
+    },
+  }
+}
+
 export function mount(ctx, env) {
-  const h = env.h
-  const slots = ctx.slots || (typeof ctx.get === 'function' ? ctx.get('slots') : null)
-  if (!slots || typeof slots.register !== 'function') {
+  if (!ctx.slots || typeof ctx.slots.register !== 'function' || typeof ctx.slots.inject !== 'function') {
     throw new Error('dsh-toolbox: the slots service is unavailable')
   }
 
-  const client = createArchiveClient({
-    // Bound once: the client never reaches for a global itself.
-    fetchImpl: (url, init) => fetch(url, init),
-  })
+  const store = createOpenStore()
+  const client = createArchiveClient({ fetchImpl: (url, init) => fetch(url, init) })
   const panel = createArchivePanel({ client, isEnabled: archiveApiEnabled })
 
-  // The overlay is only rendered while it is open; no timers, no observers.
-  let open = false
-  const listeners = new Set()
-  const notify = () => {
-    for (const listener of listeners) listener()
-  }
-  const toggle = () => {
-    open = !open
-    notify()
-    if (open) void panel.refresh()
+  function Row() {
+    const open = useSyncExternalStore(store.subscribe, store.isOpen)
+    return h(
+      'button',
+      {
+        type: 'button',
+        class: 'dsh-toolbox-archive-row',
+        'aria-expanded': open ? 'true' : 'false',
+        onClick: () => store.set(!open),
+      },
+      '历史归档',
+    )
   }
 
-  const row = slots.register({ name: PANEL_SLOT, key: 'dsh-toolbox#archive' }, () =>
-    h('button', { type: 'button', class: 'dsh-toolbox-archive-row', onClick: toggle }, '历史归档'),
-  )
-  env.track(typeof row === 'function' ? row : () => row?.dispose?.())
-
-  const overlay = slots.register({ name: OVERLAY_SLOT, key: 'dsh-toolbox#archive-overlay' }, () => {
-    if (!open) return null
+  function Overlay() {
+    const open = useSyncExternalStore(store.subscribe, store.isOpen)
+    const [tick, setTick] = useState(0)
     const view = panel.view()
-    return h('div', { class: 'dsh-toolbox-archive' }, [
-      h('header', null, [h('strong', null, '历史归档'), h('button', { type: 'button', onClick: toggle }, '关闭')]),
-      view.state === 'disabled' ? h('p', null, view.message) : null,
-      view.message ? h('p', { class: 'dsh-toolbox-archive-error' }, view.message) : null,
+
+    useEffect(() => {
+      if (!open) return
+      let live = true
+      void panel.refresh().then(() => {
+        if (live) setTick((value) => value + 1)
+      })
+      return () => {
+        live = false
+      }
+    }, [open])
+
+    if (!open) return null
+    const run = (action) => () => {
+      void action().then(() => setTick((value) => value + 1))
+    }
+    return h('div', { class: 'dsh-toolbox-archive', 'data-tick': tick }, [
+      h('header', null, [
+        h('strong', null, '历史归档'),
+        h('button', { type: 'button', onClick: () => store.set(false) }, '关闭'),
+      ]),
+      view.state === 'disabled' || view.message ? h('p', { class: 'dsh-toolbox-archive-note' }, view.message) : null,
       h(
         'ul',
         null,
-        view.rows.map((rowView) =>
-          h('li', { key: rowView.id }, [
-            h('span', null, rowView.label),
-            h('button', { type: 'button', disabled: !view.canDelete, onClick: () => void panel.unarchive(rowView.id) }, '恢复'),
-            h('button', { type: 'button', disabled: !view.canDelete, onClick: () => void panel.remove(rowView.id) }, '删除'),
+        view.rows.map((row) =>
+          h('li', { key: row.id }, [
+            h('span', null, row.label),
+            h('button', { type: 'button', disabled: !view.canDelete, onClick: run(() => panel.unarchive(row.id)) }, '恢复'),
+            h('button', { type: 'button', disabled: !view.canDelete, onClick: run(() => panel.remove(row.id)) }, '删除'),
           ]),
         ),
       ),
     ])
-  })
-  env.track(typeof overlay === 'function' ? overlay : () => overlay?.dispose?.())
+  }
+
+  env.track(ctx.slots.inject(PANEL_SLOT, () => ctx.slots.register({ name: PANEL_SLOT, id: ROW_ID, order: 200 }, Row)))
+  env.track(
+    ctx.slots.inject(OVERLAY_SLOT, () => ctx.slots.register({ name: OVERLAY_SLOT, id: OVERLAY_ID, order: 200 }, Overlay)),
+  )
 
   return () => {
-    if (open) {
-      open = false
-      notify()
-    }
-    listeners.clear()
+    store.set(false)
     panel.dispose()
   }
 }
