@@ -113,7 +113,7 @@ export function mount(ctx, env) {
       return 'threw: ' + String(error && error.message)
     }
   }
-  window.__DSH_TOOLBOX_ARCHIVE__ = {
+  if (typeof window !== 'undefined') window.__DSH_TOOLBOX_ARCHIVE__ = {
     mounted: true,
     panelId: PANEL_ID,
     mainSlot: MAIN_SLOT,
@@ -123,7 +123,7 @@ export function mount(ctx, env) {
   }
 
   return () => {
-    if (window.__DSH_TOOLBOX_ARCHIVE__) delete window.__DSH_TOOLBOX_ARCHIVE__
+    if (typeof window !== 'undefined' && window.__DSH_TOOLBOX_ARCHIVE__) delete window.__DSH_TOOLBOX_ARCHIVE__
     panel.dispose()
   }
 }
