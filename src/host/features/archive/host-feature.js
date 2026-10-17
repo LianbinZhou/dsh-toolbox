@@ -1,0 +1,88 @@
+/**
+ * S4-c · mount the archive feature on the host (Pi's plan A).
+ *
+ * Two routes belong to this feature and they live or die TOGETHER:
+ *
+ *   GET  /api/archive-manager/token    issues the per-process credential
+ *   POST /api/archive-manager/delete   the guarded delete
+ *
+ * A delete route without a token route is unusable (the UI could never get a
+ * credential); a token route without a delete route is dead surface. So the two
+ * are registered as one unit: if either registration throws, the other is rolled
+ * back and nothing is left mounted.
+ *
+ * Nothing is mounted unless the caller explicitly enables it AND supplies a
+ * token AND the origins it really serves. Missing any of the three is a refusal,
+ * not a partial mount.
+ */
+
+import { TOKEN_PATH, createTokenEndpoint } from './token-route.js'
+import { DELETE_PATH, registerArchiveRoutes } from './route-guard.js'
+
+/**
+ * @param {object} options
+ * @param {{register: Function}} options.webServer
+ * @param {string} options.token - per-process credential (>= 32 chars)
+ * @param {string[]} options.origins - the origins this host really serves
+ * @param {(id: string) => object} options.onDelete
+ * @param {object} options.registry - from createTokenRegistry
+ * @param {boolean} [options.enabled]
+ * @param {boolean} [options.trustProxy]
+ * @returns {{registered: boolean, reason?: string, dispose: Function, routes: string[]}}
+ */
+export function mountArchiveRoutes({ webServer, token, origins, onDelete, registry, enabled = false, trustProxy = false } = {}) {
+  const nothing = { registered: false, reason: 'not mounted', dispose() {}, routes: [] }
+
+  if (enabled !== true) return { ...nothing, reason: 'archive http routes are disabled by configuration' }
+  if (!webServer || typeof webServer.register !== 'function') return { ...nothing, reason: 'no web server' }
+  if (typeof token !== 'string' || token.length < 32) return { ...nothing, reason: 'no route token configured' }
+  if (!Array.isArray(origins) || origins.length === 0) return { ...nothing, reason: 'no allowed origins configured' }
+  if (!registry || typeof registry.current !== 'function') return { ...nothing, reason: 'no token registry' }
+  if (typeof onDelete !== 'function') return { ...nothing, reason: 'no delete handler' }
+
+  const disposers = []
+  let tokenDisposer
+  let deleteDisposer
+
+  try {
+    // 1) the credential route
+    tokenDisposer = webServer.register({
+      kind: 'exact',
+      method: 'GET',
+      path: TOKEN_PATH,
+      handler: createTokenEndpoint({ registry, origins, trustProxy }),
+    })
+    if (typeof tokenDisposer === 'function') disposers.push(tokenDisposer)
+
+    // 2) the delete route (fail-closed on its own as well)
+    const registration = registerArchiveRoutes({ webServer, onDelete, token, origins, trustProxy, enabled: true })
+    if (registration.registered !== true) throw new Error('delete route refused to register: ' + registration.reason)
+    deleteDisposer = registration.dispose
+    if (typeof deleteDisposer === 'function') disposers.push(deleteDisposer)
+  } catch (error) {
+    // Composite rollback: a half-mounted pair is worse than nothing mounted.
+    for (const dispose of disposers.reverse()) {
+      try {
+        dispose()
+      } catch (cleanupError) {
+        /* keep unwinding */
+      }
+    }
+    return { registered: false, reason: String(error && error.message ? error.message : error), dispose() {}, routes: [] }
+  }
+
+  let disposed = false
+  const dispose = () => {
+    if (disposed) return
+    disposed = true
+    for (const one of disposers.reverse()) {
+      try {
+        one()
+      } catch (error) {
+        /* a disposer must never throw outward */
+      }
+    }
+  }
+
+  return { registered: true, dispose, routes: [TOKEN_PATH, DELETE_PATH] }
+}

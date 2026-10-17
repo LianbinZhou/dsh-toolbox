@@ -26,6 +26,7 @@
 import { randomBytes } from 'node:crypto'
 import { createServer } from 'node:http'
 import { isSafeSessionId } from './paths.js'
+import { sameToken } from './token-route.js'
 
 export const DELETE_PATH = '/api/archive-manager/delete'
 export const MAX_BODY_BYTES = 64 * 1024
@@ -124,7 +125,10 @@ export function createRouteGuard({ allowedOrigins = [], token, trustProxy = fals
     if (typeof token !== 'string' || token.length < 32) {
       return refuse(401, 'route has no credential configured')
     }
-    if (String(headers[TOKEN_HEADER] ?? '') !== token) {
+    // Length-first constant-time comparison: `timingSafeEqual` throws when the
+    // buffers differ in length, so a short or missing token must be rejected
+    // before it can reach crypto.
+    if (!sameToken(headers[TOKEN_HEADER], token)) {
       return refuse(401, 'missing or invalid token')
     }
 
