@@ -39,7 +39,8 @@ export function createMemoryJournal(initial = []) {
  */
 export function createFileJournal(dir) {
   const file = join(dir, 'archive-journal.json')
-  // A unique temp name keeps two instances from overwriting each other's write.\n  const temp = join(dir, 'archive-journal.json.' + process.pid + '.tmp')
+  // A unique temp name keeps two instances from overwriting each other's write.
+  const temp = join(dir, 'archive-journal.json.' + process.pid + '.tmp')
 
   /** Set by read(); a corrupt file must NOT look like an empty one. */
   let corrupt = false
@@ -81,5 +82,14 @@ export function createFileJournal(dir) {
     }
   }
 
-  return {\n    read,\n    write,\n    // Ask the file, not a stale flag: callers check health BEFORE acting.\n    health() {\n      read()\n      return { corrupt }\n    },\n    path: file,\n  }
+  return {
+    read,
+    write,
+    // Ask the file, not a stale flag: callers check health BEFORE acting.
+    health() {
+      read()
+      return { corrupt }
+    },
+    path: file,
+  }
 }
