@@ -193,7 +193,11 @@ export function apply(ctx, config) {
         onDelete: (id) => {
           const api = ensureArchiveApi()
           if (api === null) return { ok: false, status: 503, reason: 'archive-session-adapter-unavailable' }
-          return api.delete(id)
+          const outcome = api.delete(id)
+          Promise.resolve(outcome).then((r) => {
+            if (r && r.ok === false) console.warn('[dsh-toolbox] 删除被拒 ' + id + ' -> ' + r.reason + (r.status ? ' (HTTP ' + r.status + ')' : ''))
+          }).catch(() => {})
+          return outcome
         },
       })
     }
