@@ -39,7 +39,19 @@ async function stop(server) {
 }
 
 async function fire(url, init = {}) {
-  const response = await fetch(url, init)
+  // A server that has just called listen() can still refuse the first connection
+  // on Windows. Two retries keep the matrix deterministic without hiding a real
+  // refusal (a 4xx is a response, not a throw).
+  let response
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      response = await fetch(url, init)
+      break
+    } catch (error) {
+      if (attempt === 2) throw error
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+  }
   const text = await response.text()
   let json
   try {

@@ -35,7 +35,7 @@
  */
 
 import { dirname } from 'node:path'
-import { isInside, isSafeSessionId } from './paths.js'
+import { canonicalSessionId, isInside, isSafeSessionId } from './paths.js'
 
 /** Stable machine codes; the route and the UI switch on these. */
 export const REASONS = {
@@ -103,10 +103,32 @@ export function createArchiveService(deps) {
   }
 
   /** Idempotent bookkeeping. "Already unarchived" is success (D5). */
+  /** Every spelling of one canonical id, deduplicated. */
+  function spellings(id) {
+    const bare = String(id).replace(/^session-/, '')
+    return [String(id), bare, 'session-' + bare].filter((value, index, all) => all.indexOf(value) === index)
+  }
+
+  /**
+   * An entry read back from disk is untrusted input: it may have been truncated,
+   * edited, or written by an older version. Fail closed rather than acting on it.
+   */
+  function entryIsSane(entry) {
+    if (!entry || typeof entry !== 'object') return false
+    if (!isSafeSessionId(entry.id)) return false
+    if (typeof entry.trashPath !== 'string' || typeof entry.originalPath !== 'string') return false
+    const root = String(deps.trashRoot())
+    return entry.trashPath.startsWith(root + '/') || entry.trashPath.startsWith(root + '\\')
+  }
+
   function cleanup(id) {
     const failed = []
     try {
-      if (deps.readArchived().includes(id)) deps.unarchive(id)
+      // P1-9: the archive may hold BOTH spellings. Clearing only the one in the
+      // request leaves a ghost row in list().
+      for (const spelling of spellings(id)) {
+        if (deps.readArchived().map(String).includes(spelling)) deps.unarchive(spelling)
+      }
     } catch (error) {
       failed.push('unarchive')
     }
@@ -127,6 +149,7 @@ export function createArchiveService(deps) {
   async function finish(id) {
     const entry = findEntry(deps.journal, id)
     if (!entry) return { ok: true, removedDir: true }
+    if (!entryIsSane(entry)) return { ok: false, status: 409, reason: 'journal-corrupt' }
 
     const failed = cleanup(id)
     if (failed.length > 0) {
@@ -330,6 +353,7 @@ export function createArchiveService(deps) {
       if (!entry || entry.phase === 'done') {
         return { ok: false, status: 404, reason: REASONS.NOT_ARCHIVED }
       }
+      if (!entryIsSane(entry)) return { ok: false, status: 409, reason: 'journal-corrupt' }
       if (entry.phase !== 'trashed' && entry.phase !== 'cleaned') {
         return { ok: false, status: 409, reason: REASONS.IN_PROGRESS }
       }
@@ -356,13 +380,17 @@ export function createArchiveService(deps) {
 
     async list() {
       await heal()
-      return {
-        ok: true,
-        rows: deps.readArchived().map((id) => {
-          const entry = findEntry(deps.journal, id)
-          return { id: String(id), phase: entry ? entry.phase : 'archived' }
-        }),
+      // P1-9: one canonical id may appear twice (bare + prefixed); show it once.
+      const seen = new Set()
+      const rows = []
+      for (const raw of deps.readArchived()) {
+        const canonical = canonicalSessionId(String(raw))
+        if (canonical === '' || seen.has(canonical)) continue
+        seen.add(canonical)
+        const entry = findEntry(deps.journal, String(raw))
+        rows.push({ id: String(raw), phase: entry ? entry.phase : 'archived' })
       }
+      return { ok: true, rows }
     },
 
     async unarchiveSession(id) {

@@ -15,7 +15,7 @@
  *   D. (the per-id map lives in rpc.js)
  */
 
-import { appendFileSync, mkdirSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs'
+import { appendFileSync, chmodSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, truncateSync } from 'node:fs'
 import { dirname } from 'node:path'
 
 /** Fields an audit record may carry. `count` belongs to an aggregated summary. */
@@ -82,13 +82,30 @@ export function createFileAudit(file, { maxBytes = 256 * 1024 } = {}) {
         } catch (error) {
           /* ignore */
         }
+        let rotated = true
         try {
           renameSync(file, file + '.1')
         } catch (error) {
-          /* ignore */
+          rotated = false
+        }
+        if (!rotated) {
+          // Rotation failed (the file is held open). Truncating keeps the log
+          // bounded; silently appending forever is what we are fixing.
+          try {
+            truncateSync(file, 0)
+          } catch (error) {
+            return
+          }
         }
       }
       appendFileSync(file, line, 'utf8')
+      try {
+        // Audit records are local state; nobody else on the machine needs to read
+        // them. (Windows ignores the mode, POSIX honours it.)
+        chmodSync(file, 0o600)
+      } catch (error) {
+        /* best effort */
+      }
     } catch (error) {
       // An audit sink must never break a delete.
     }

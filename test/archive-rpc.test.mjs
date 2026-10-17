@@ -107,7 +107,7 @@ test('RPC · audit records never carry a non-whitelisted field', async () => {
 
 test('gateway · dispatches, refuses unknown methods, requires a principal', async () => {
   const { rpc, world } = setup()
-  const gateway = createArchiveGateway({ rpc })
+  const gateway = createArchiveGateway({ rpc, allowPrincipalFromRequest: true })
   assert.ok(gateway.methods.includes(METHODS.DELETE))
   assert.equal((await gateway.dispatch({ method: METHODS.DELETE, principal: UI, params: { sessionId: ID_A } })).ok, true)
   assert.equal(world.dirExists(ID_A), false)

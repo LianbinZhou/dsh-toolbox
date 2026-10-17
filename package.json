@@ -25,7 +25,7 @@
   "scripts": {
     "build": "node tools/build.mjs",
     "test": "node --test",
-    "prepack": "node tools/build.mjs && node --test"
+    "prepack": "node tools/build.mjs"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.5",

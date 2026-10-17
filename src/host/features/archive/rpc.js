@@ -26,12 +26,15 @@ export const METHODS = {
 
 /** Fields a response may carry. Everything else a service returns is dropped. */
 const RESPONSE_FIELDS = ['ok', 'status', 'reason', 'removedDir', 'restored', 'warning', 'rows']
+/** P2-11: a list response is capped so one call cannot return the whole history. */
+export const MAX_ROWS = 500
 
 export function pickResponse(result) {
   if (!result || typeof result !== 'object') return { ok: false, status: 500, reason: 'internal-error' }
   const safe = {}
   for (const field of RESPONSE_FIELDS) {
-    if (result[field] !== undefined) safe[field] = result[field]
+    if (result[field] === undefined) continue
+    safe[field] = field === 'rows' && Array.isArray(result[field]) ? result[field].slice(0, MAX_ROWS) : result[field]
   }
   if (safe.ok === undefined) safe.ok = false
   return safe
@@ -54,9 +57,11 @@ export function createArchiveRpc({ service, authorize, audit, rateLimit = {}, no
   const windowMs = Number.isFinite(rateLimit.windowMs) ? rateLimit.windowMs : 60_000
   const perActor = Number.isFinite(rateLimit.perActor) ? rateLimit.perActor : 30
   const perId = Number.isFinite(rateLimit.perId) ? rateLimit.perId : 10
-  const hits = new Map()
-  // D: the map holds one entry per id. A flood of distinct ids would grow it
-  // without bound, so it evicts the oldest insertion once it hits the cap.
+  // P2-11: actors and ids live in SEPARATE bounded maps. One shared map let an
+  // attacker flush the actor key with 1025 junk ids and reset the actor limit.
+  const actorHits = new Map()
+  const idHits = new Map()
+  const maxTrackedActors = Number.isFinite(rateLimit.maxTrackedActors) ? rateLimit.maxTrackedActors : 256
   const maxTrackedIds = Number.isFinite(rateLimit.maxTrackedIds) ? rateLimit.maxTrackedIds : 1024
 
   const isWriter = audit && typeof audit === 'object' && typeof audit.allow === 'function'
@@ -88,31 +93,34 @@ export function createArchiveRpc({ service, authorize, audit, rateLimit = {}, no
 
   const allowed = typeof authorize === 'function' ? authorize : defaultAuthorize
 
-  function withinLimit(actorKey, id, at) {
-    const check = (key, max) => {
-      const recent = (hits.get(key) || []).filter((stamp) => at - stamp < windowMs)
-      if (recent.length >= max) {
-        hits.set(key, recent)
-        return false
-      }
-      recent.push(at)
-      hits.set(key, recent)
-      return true
+  function bump(map, key, max, at, cap) {
+    const recent = (map.get(key) || []).filter((stamp) => at - stamp < windowMs)
+    if (recent.length >= max) {
+      map.set(key, recent)
+      return false
     }
-    const ok = check('actor:' + actorKey, perActor) && check('id:' + id, perId)
-    while (hits.size > maxTrackedIds) {
-      const oldest = hits.keys().next().value
+    recent.push(at)
+    map.set(key, recent)
+    while (map.size > cap) {
+      const oldest = map.keys().next().value
       if (oldest === undefined) break
-      hits.delete(oldest)
+      map.delete(oldest)
     }
-    return ok
+    return true
+  }
+
+  /** The actor window always counts; the id window only when there is an id. */
+  function withinLimit(actorKey, id, at) {
+    const actorOk = bump(actorHits, 'actor:' + actorKey, perActor, at, maxTrackedActors)
+    if (id === undefined) return actorOk
+    return bump(idHits, id, perId, at, maxTrackedIds) && actorOk
   }
 
   /**
    * Run one method with authorization, rate limiting, whitelisting and audit.
    * Never throws.
    */
-  async function call(principal, action, id, run) {
+  async function call(principal, action, id, run, limitWithoutId = false) {
     const at = now()
     const actorKey = principal && principal.id ? String(principal.id).slice(0, 64) : '(anonymous)'
     const base = {
@@ -131,7 +139,7 @@ export function createArchiveRpc({ service, authorize, audit, rateLimit = {}, no
       record({ ...base, ok: false, reason: 'forbidden', ...(id ? { id } : {}) })
       return { ok: false, status: 403, reason: 'forbidden' }
     }
-    if (id !== undefined && !withinLimit(actorKey, id, at)) {
+    if ((id !== undefined || limitWithoutId) && !withinLimit(actorKey, id, at)) {
       record({ ...base, ok: false, reason: 'rate-limited', id })
       return { ok: false, status: 429, reason: 'rate-limited' }
     }
@@ -176,16 +184,18 @@ export function createArchiveRpc({ service, authorize, audit, rateLimit = {}, no
     },
 
     async heal(principal) {
-      return call(principal, METHODS.HEAL, undefined, () => service.heal())
+      // P2-11: heal/list are rate limited per actor too, or an authenticated
+      // client can spin them forever and write an audit line each time.
+      return call(principal, METHODS.HEAL, undefined, () => service.heal(), true)
     },
 
     async list(principal) {
-      return call(principal, METHODS.LIST, undefined, () => service.list())
+      return call(principal, METHODS.LIST, undefined, () => service.list(), true)
     },
 
     /** Bounded-map diagnostics (Pi D). */
     stats() {
-      return { trackedIds: hits.size, maxTrackedIds }
+      return { trackedIds: idHits.size, trackedActors: actorHits.size, maxTrackedIds, maxTrackedActors }
     },
   }
 }
@@ -197,7 +207,7 @@ export function createArchiveRpc({ service, authorize, audit, rateLimit = {}, no
  * @param {object} options
  * @param {object} options.rpc - from createArchiveRpc
  */
-export function createArchiveGateway({ rpc } = {}) {
+export function createArchiveGateway({ rpc, resolvePrincipal, allowPrincipalFromRequest = false } = {}) {
   const table = {
     [METHODS.DELETE]: (principal, params) => rpc.delete(principal, params.sessionId),
     [METHODS.RESTORE]: (principal, params) => rpc.restore(principal, params.sessionId),
@@ -216,7 +226,15 @@ export function createArchiveGateway({ rpc } = {}) {
       }
       const handler = table[request.method]
       if (!handler) return { ok: false, status: 404, reason: 'unknown-method' }
-      return handler(request.principal, request.params || {})
+      // P2-11: the identity comes from the CONNECTION, never from the body. A
+      // dispatcher that trusts `request.principal` lets anyone self-declare
+      // `{role:'ui', local:true}`.
+      const principal = typeof resolvePrincipal === 'function'
+        ? resolvePrincipal(request)
+        : allowPrincipalFromRequest
+          ? request.principal
+          : undefined
+      return handler(principal, request.params || {})
     },
   }
 }
