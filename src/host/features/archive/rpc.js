@@ -55,11 +55,24 @@ export function createArchiveRpc({ service, authorize, audit, rateLimit = {}, no
   const perActor = Number.isFinite(rateLimit.perActor) ? rateLimit.perActor : 30
   const perId = Number.isFinite(rateLimit.perId) ? rateLimit.perId : 10
   const hits = new Map()
+  // D: the map holds one entry per id. A flood of distinct ids would grow it
+  // without bound, so it evicts the oldest insertion once it hits the cap.
+  const maxTrackedIds = Number.isFinite(rateLimit.maxTrackedIds) ? rateLimit.maxTrackedIds : 1024
 
+  const isWriter = audit && typeof audit === 'object' && typeof audit.allow === 'function'
+
+  /**
+   * Write one record. A plain sink gets everything (tests, simple hosts); a
+   * WRITER aggregates rejections so an unauthenticated flood cannot fill the log.
+   */
   function record(entry) {
-    if (typeof audit !== 'function') return
     try {
-      audit(pick(entry))
+      if (isWriter) {
+        if (entry && entry.ok === true) audit.allow(pick(entry))
+        else audit.reject(pick(entry))
+        return
+      }
+      if (typeof audit === 'function') audit(pick(entry))
     } catch (error) {
       /* an audit sink must never break a delete */
     }
@@ -86,7 +99,13 @@ export function createArchiveRpc({ service, authorize, audit, rateLimit = {}, no
       hits.set(key, recent)
       return true
     }
-    return check('actor:' + actorKey, perActor) && check('id:' + id, perId)
+    const ok = check('actor:' + actorKey, perActor) && check('id:' + id, perId)
+    while (hits.size > maxTrackedIds) {
+      const oldest = hits.keys().next().value
+      if (oldest === undefined) break
+      hits.delete(oldest)
+    }
+    return ok
   }
 
   /**
@@ -162,6 +181,11 @@ export function createArchiveRpc({ service, authorize, audit, rateLimit = {}, no
 
     async list(principal) {
       return call(principal, METHODS.LIST, undefined, () => service.list())
+    },
+
+    /** Bounded-map diagnostics (Pi D). */
+    stats() {
+      return { trackedIds: hits.size, maxTrackedIds }
     },
   }
 }
