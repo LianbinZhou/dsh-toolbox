@@ -11,7 +11,10 @@
 import { ROUTE_CASES, runRouteMatrix } from '../test/support/route-attack.mjs'
 import { createLegacyServer } from '../test/fixtures/legacy-archive-route.mjs'
 
-const summary = await runRouteMatrix(createLegacyServer)
+const summary = await runRouteMatrix((onDelete) => ({
+  server: createLegacyServer(onDelete),
+  token: 'legacy-route-has-no-credential',
+}))
 
 if (process.argv.includes('--json')) {
   console.log(JSON.stringify(summary, null, 2))

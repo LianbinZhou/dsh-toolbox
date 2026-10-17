@@ -165,7 +165,7 @@ import { h, useEffect, useState, fragment } from '../runtime.js';
      * Every panel worth offering, freshly read at the moment the menu opens:
      * the slot ledger first, then the DOM-injected rows.
      */
-    function collectPanels(ctx, t) {
+    export function collectPanels(ctx, t) {
       const items = [];
       const seen = new Set();
 
@@ -184,8 +184,16 @@ import { h, useEffect, useState, fragment } from '../runtime.js';
             order: typeof options.order === 'number' ? options.order : index,
             panelId: id,
             run() {
-              const layout =
-                ctx.layout || (typeof ctx.get === 'function' ? ctx.get('layout') : null);
+              // `ctx.layout || ctx.get('layout')` is NOT enough: a plugin that did
+              // not declare `layout` in its inject list throws on the property
+              // access itself, so the right-hand side never runs. Catch it.
+              let layout = null;
+              try {
+                layout = ctx.layout;
+              } catch (err) {
+                layout = null;
+              }
+              if (!layout && typeof ctx.get === 'function') layout = ctx.get('layout');
               if (!layout || typeof layout.selectPanel !== 'function') {
                 throw new Error('layout.selectPanel is unavailable');
               }

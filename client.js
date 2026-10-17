@@ -1360,7 +1360,13 @@
           order: typeof options.order === "number" ? options.order : index,
           panelId: id,
           run() {
-            const layout = ctx.layout || (typeof ctx.get === "function" ? ctx.get("layout") : null);
+            let layout = null;
+            try {
+              layout = ctx.layout;
+            } catch (err) {
+              layout = null;
+            }
+            if (!layout && typeof ctx.get === "function") layout = ctx.get("layout");
             if (!layout || typeof layout.selectPanel !== "function") {
               throw new Error("layout.selectPanel is unavailable");
             }

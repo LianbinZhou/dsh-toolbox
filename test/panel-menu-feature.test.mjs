@@ -14,7 +14,7 @@
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mount, resetMenuState } from '../src/client/features/panel-menu.js'
+import { mount, resetMenuState, collectPanels } from '../src/client/features/panel-menu.js'
 
 function makeCtx(options = {}) {
   const events = []
@@ -95,11 +95,50 @@ test('dispose removes both slots: that is what brings the hidden rows back', () 
   assert.equal(disposals.length, 4, 'two dictionaries + two slots, nothing left registered')
 })
 
-test('a layout service that is not declared falls back to ctx.get', () => {
-  const { ctx } = makeCtx({ layoutThrows: true })
-  const env = { track: (value) => value }
+test('the layout fallback really runs, not just the mount path (Pi P2)', () => {
+  // `mount` never reads `layout`; only `collectPanels().run()` does. Calling it is
+  // the only way this test can fail when the fallback is removed.
+  const calls = []
+  const layoutStub = { selectPanel: (id) => calls.push(id) }
+  const ctx = {
+    slots: { entriesOfSlot: () => [{ options: { id: 'plugins', label: 'Plugins', order: 1 } }] },
+    get: (name) => (name === 'layout' ? layoutStub : undefined),
+  }
+  // The declared-inject path throws, exactly like cordis does when a plugin has
+  // not declared `layout`. The fallback must cover it.
+  Object.defineProperty(ctx, 'layout', {
+    get() {
+      throw new Error('cannot get property "layout" without inject')
+    },
+    configurable: true,
+  })
 
-  assert.doesNotThrow(() => mount(ctx, env), 'the inject-free path must keep the feature mountable')
+  const originalDocument = globalThis.document
+  globalThis.document = { querySelectorAll: () => [] }
+  try {
+    const items = collectPanels(ctx, (key) => key)
+    assert.equal(items.length, 1, 'the slot ledger entry becomes one menu item')
+    assert.equal(items[0].panelId, 'plugins')
+    assert.doesNotThrow(() => items[0].run())
+    assert.deepEqual(calls, ['plugins'], 'layout.selectPanel actually received the panel id')
+  } finally {
+    globalThis.document = originalDocument
+  }
+})
+
+test('run() reports a missing layout instead of throwing something opaque', () => {
+  const ctx = {
+    slots: { entriesOfSlot: () => [{ options: { id: 'plugins', label: 'Plugins' } }] },
+    get: () => undefined,
+  }
+  const originalDocument = globalThis.document
+  globalThis.document = { querySelectorAll: () => [] }
+  try {
+    const items = collectPanels(ctx, (key) => key)
+    assert.throws(() => items[0].run(), /layout\.selectPanel is unavailable/)
+  } finally {
+    globalThis.document = originalDocument
+  }
 })
 
 test('resetMenuState never throws, even before any mount', () => {

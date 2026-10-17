@@ -1,61 +1,55 @@
 /**
  * S4-b · the archive delete route, guarded.
  *
- * Pi's R0: `/api/archive-manager/delete` was a plain `webServer.register` exact
- * route with **no authentication at all** — exact routes are matched before the
- * API gateway, so a LAN client or a malicious page could physically delete
- * sessions with one simple POST. This module is the answer.
+ * Pi 的 R0 复核打穿了三层，这里逐条重写：
  *
- * Defence in depth, cheapest first:
+ *   P0-1 同源不能拿请求里的 Host 当权威 —— 那就等于让攻击者自己签通行证。
+ *        改为**本地真实监听的 origin 白名单**（`createArchiveServer` 从
+ *        `server.address()` 推导；宿主挂载时由调用方显式给 `origins`）。
+ *        Host 也必须落在这个白名单里，所以 DNS rebinding 后 `Host: evil.example`
+ *        直接被拒。
+ *   P0-2 loopback 不是认证 —— 前面挂个反向代理，所有远程请求的 remoteAddress
+ *        都是 127.0.0.1。带 `X-Forwarded-For` / `Forwarded` 的请求一律拒绝，
+ *        除非显式 `trustProxy: true`。
+ *   P0-3 常量头不是认证 —— 只当 CSRF 预检触发器（浏览器简单请求设不了自定义头）。
+ *        真正的凭证是**每进程随机 token**（`TOKEN_HEADER`），未配置 token 时
+ *        一律 fail closed。
  *
- *   1. loopback peer only            (a LAN client never reaches the handler)
- *   2. POST only; OPTIONS → 204      (no method confusion, no CORS surface)
- *   3. custom header required        (a browser simple request cannot set it)
- *   4. Origin, when present, must be same-origin (blocks a foreign page)
- *   5. Content-Type must be JSON     (text/plain would skip the preflight)
- *   6. body cap 64 KB                (streamed; over-cap chunks are dropped)
- *   7. sessionId re-validated with the paths allowlist
- *   8. error responses carry no absolute path, stack or internal detail
+ * 另外两条 P1：
+ *   P1-5 错误响应脱敏：service 的 `error` / `warning` 原文**永不**回传客户端。
+ *   P1-6 同一份 handler 同时用于独立靶场和宿主 `webServer.register` 挂载，
+ *        避免"测的不是生效的那份"。
  *
- * The handler is transport-only: it never decides WHAT may be deleted. That
- * belongs to the service layer (R4/R5).
+ * 这个 handler 只做传输层门卫，不决定"能不能删"（那是服务层 R4/R5 的事）。
  */
 
+import { randomBytes } from 'node:crypto'
 import { createServer } from 'node:http'
 import { isSafeSessionId } from './paths.js'
 
 export const DELETE_PATH = '/api/archive-manager/delete'
 export const MAX_BODY_BYTES = 64 * 1024
-/** A header a browser simple request cannot set: it forces a preflight. */
+/** Forces a preflight; it is NOT a credential. */
 export const CSRF_HEADER = 'x-dsh-toolbox'
-/** The only client this route trusts. */
 export const CSRF_VALUE = '1'
+/** The actual credential: a per-process random value. */
+export const TOKEN_HEADER = 'x-dsh-toolbox-token'
 
 const LOOPBACK_PEERS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1'])
+const PROXY_HEADERS = ['x-forwarded-for', 'x-forwarded-host', 'x-forwarded-proto', 'forwarded', 'x-real-ip']
 
-/** @param {string|undefined} peer - `req.socket.remoteAddress` */
+/** @param {string|undefined} peer */
 export function isLoopbackPeer(peer) {
   return typeof peer === 'string' && LOOPBACK_PEERS.has(peer)
 }
 
-/**
- * Same-origin check by Host comparison.
- *
- * The server's listening port is dynamic, so comparing against a hardcoded
- * origin is impossible; the request's own Host header is the authority it must
- * match. An absent Origin is allowed because step 3 has already proven this is
- * not a simple request.
- * @param {string|undefined} origin - the Origin header
- * @param {string|undefined} host - the Host header
- */
-export function isSameOrigin(origin, host) {
-  if (origin === undefined) return true
-  if (typeof origin !== 'string' || origin.length === 0) return false
-  if (typeof host !== 'string' || host.length === 0) return false
+/** Full origin (`scheme://host:port`), or null when unparsable. */
+export function normalizeOrigin(value) {
+  if (typeof value !== 'string' || value.length === 0) return null
   try {
-    return new URL(origin).host === host
+    return new URL(value).origin
   } catch (error) {
-    return false
+    return null
   }
 }
 
@@ -65,69 +59,112 @@ export function isJsonContentType(value) {
   return value.split(';')[0].trim().toLowerCase() === 'application/json'
 }
 
-/**
- * Decide whether this request may reach the handler.
- * @param {{method?: string, headers?: object, peer?: string}} request
- * @returns {{ok: true}|{ok: false, status: number, error: string}}
- */
-export function authorizeRequest(request) {
-  const method = String(request.method || 'GET').toUpperCase()
-  const headers = request.headers || {}
-
-  if (!isLoopbackPeer(request.peer)) {
-    return { ok: false, status: 403, error: 'local access only' }
-  }
-  if (method === 'OPTIONS') {
-    return { ok: true, preflight: true }
-  }
-  if (method !== 'POST') {
-    return { ok: false, status: 405, error: 'method not allowed' }
-  }
-  if (String(headers[CSRF_HEADER] ?? '') !== CSRF_VALUE) {
-    return { ok: false, status: 403, error: 'missing client header' }
-  }
-  if (!isSameOrigin(headers.origin, headers.host)) {
-    return { ok: false, status: 403, error: 'cross-origin request refused' }
-  }
-  if (!isJsonContentType(headers['content-type'])) {
-    return { ok: false, status: 415, error: 'content type must be application/json' }
-  }
-  const declared = Number(headers['content-length'])
-  if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
-    return { ok: false, status: 413, error: 'body too large' }
-  }
-  return { ok: true }
+/** A fresh per-process credential. */
+export function createRouteToken() {
+  return randomBytes(32).toString('hex')
 }
 
-/** One JSON answer. Never includes a path or a stack. */
+/**
+ * Build one guard bound to a FIXED origin allowlist and one token.
+ *
+ * @param {object} options
+ * @param {string[]} options.allowedOrigins - the origins this server really
+ *        listens on. NEVER derived from an incoming request.
+ * @param {string} options.token - the credential a caller must present
+ * @param {boolean} [options.trustProxy] - accept proxy headers (only when a
+ *        trusted local proxy is configured)
+ */
+export function createRouteGuard({ allowedOrigins = [], token, trustProxy = false } = {}) {
+  const origins = new Set(allowedOrigins.map(normalizeOrigin).filter(Boolean))
+  const hosts = new Set([...origins].map((origin) => new URL(origin).host))
+
+  /**
+   * @param {{method?: string, headers?: object, peer?: string}} request
+   * @returns {{ok: true, preflight?: boolean}|{ok: false, status: number, code: string}}
+   */
+  function authorize(request) {
+    const method = String(request.method || 'GET').toUpperCase()
+    const headers = request.headers || {}
+    const refuse = (status, code) => ({ ok: false, status, code })
+
+    // P0-2: a proxied request looks like loopback and is not.
+    if (!trustProxy && PROXY_HEADERS.some((name) => headers[name] !== undefined)) {
+      return refuse(403, 'proxied request refused')
+    }
+    if (!isLoopbackPeer(request.peer)) {
+      return refuse(403, 'local access only')
+    }
+    if (method === 'OPTIONS') {
+      return { ok: true, preflight: true }
+    }
+    if (method !== 'POST') {
+      return refuse(405, 'method not allowed')
+    }
+
+    // P0-1: the Host must be one we actually listen on. This is what stops DNS
+    // rebinding: after a rebind the browser still sends `Host: evil.example`.
+    if (origins.size === 0) {
+      return refuse(403, 'no allowed origins configured')
+    }
+    const host = typeof headers.host === 'string' ? headers.host.toLowerCase() : ''
+    if (!hosts.has(host)) {
+      return refuse(403, 'unexpected host')
+    }
+
+    // P1-7: a full origin comparison (scheme + host + port), not just the host.
+    const origin = headers.origin
+    if (origin !== undefined) {
+      const normalized = normalizeOrigin(origin)
+      if (normalized === null || !origins.has(normalized)) {
+        return refuse(403, 'cross-origin request refused')
+      }
+    }
+
+    // P0-3: the real credential.
+    if (typeof token !== 'string' || token.length < 32) {
+      return refuse(401, 'route has no credential configured')
+    }
+    if (String(headers[TOKEN_HEADER] ?? '') !== token) {
+      return refuse(401, 'missing or invalid token')
+    }
+
+    if (!isJsonContentType(headers['content-type'])) {
+      return refuse(415, 'content type must be application/json')
+    }
+    const declared = Number(headers['content-length'])
+    if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
+      return refuse(413, 'body too large')
+    }
+    return { ok: true }
+  }
+
+  return { authorize, allowedOrigins: [...origins], hosts: [...hosts], hasToken: typeof token === 'string' && token.length >= 32 }
+}
+
+/** One JSON answer. Only whitelisted fields; never a service message. */
 function respond(res, status, body) {
   const text = JSON.stringify(body)
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
     'content-length': Buffer.byteLength(text),
     'cache-control': 'no-store',
-    // No CORS headers: nothing outside this origin may read the answer.
+    // No CORS headers by design: nothing outside this origin may read the answer.
   })
   res.end(text)
 }
 
 /**
- * Build the guarded HTTP server.
+ * The ONE delete handler used by both the standalone port and the host mount.
  *
  * @param {object} options
- * @param {(sessionId: string) => (Promise<object>|object)} options.onDelete -
- *        the service call; the handler only validates and translates its result
- * @param {(req: object) => string|undefined} [options.peerOf] - injectable for tests
- * @returns {import('node:http').Server}
+ * @param {{authorize: Function}} options.guard
+ * @param {(sessionId: string) => (Promise<object>|object)} options.onDelete
+ * @param {() => string|undefined} options.peerOf
+ * @returns {(req: object, res: object) => void}
  */
-export function createArchiveServer({ onDelete, peerOf } = {}) {
-  const peer = peerOf || ((req) => req.socket && req.socket.remoteAddress)
-  return buildServer(peer, onDelete)
-}
-
-function buildServer(peerOf, onDelete) {
-  return createServer((req, res) => {
-    const decision = authorizeRequest({
+export function createDeleteHandler({ guard, onDelete, peerOf }) {
+  return function handleDelete(req, res) {
+    const decision = guard.authorize({
       method: req.method,
       headers: req.headers,
       peer: peerOf(req),
@@ -139,8 +176,7 @@ function buildServer(peerOf, onDelete) {
       return
     }
     if (!decision.ok) {
-      respond(res, decision.status, { ok: false, error: decision.error })
-      // Drain so the connection can be reused; the body is never buffered.
+      respond(res, decision.status, { ok: false, error: decision.code })
       req.resume()
       return
     }
@@ -176,17 +212,18 @@ function buildServer(peerOf, onDelete) {
         respond(res, 400, { ok: false, error: 'invalid sessionId' })
         return
       }
+
       Promise.resolve()
         .then(() => (typeof onDelete === 'function' ? onDelete(parsed.sessionId) : { ok: true }))
         .then((result) => {
-          const body = result && typeof result === 'object' ? result : { ok: true }
-          // Only the fields the UI needs; never the reason a path failed.
-          respond(res, body.ok === false ? 409 : 200, {
-            ok: body.ok !== false,
-            removedDir: body.removedDir === true,
-            ...(typeof body.error === 'string' ? { error: body.error } : {}),
-            ...(typeof body.warning === 'string' ? { warning: body.warning } : {}),
-          })
+          const value = result && typeof result === 'object' ? result : {}
+          const ok = value.ok !== false
+          // P1-5: never pass the service message through — it may contain an
+          // absolute path, a stack, or a hint about the filesystem layout.
+          const body = { ok, removedDir: value.removedDir === true }
+          if (!ok) body.error = 'delete refused'
+          else if (value.warning !== undefined) body.warning = 'deleted with warnings'
+          respond(res, ok ? 200 : 409, body)
         })
         .catch(() => {
           respond(res, 500, { ok: false, error: 'delete failed' })
@@ -199,5 +236,92 @@ function buildServer(peerOf, onDelete) {
         /* the socket is already gone */
       }
     })
+  }
+}
+
+/**
+ * Standalone guarded port (used by the attack matrix).
+ *
+ * The origin allowlist is derived from the address the server REALLY bound to,
+ * never from a request header. A token is generated unless one is passed.
+ *
+ * @param {object} options
+ * @param {(id: string) => object} options.onDelete
+ * @param {string} [options.token]
+ * @param {number[]} [options.extraPorts] - extra ports to accept (tunnels)
+ */
+export function createArchiveServer({ onDelete, token, extraPorts = [], trustProxy = false } = {}) {
+  const secret = token || createRouteToken()
+  let guard = null
+
+  const server = createServer((req, res) => {
+    if (guard === null) {
+      guard = createRouteGuard({ allowedOrigins: originsFor(server, extraPorts), token: secret, trustProxy })
+    }
+    createDeleteHandler({ guard, onDelete, peerOf: (r) => r.socket && r.socket.remoteAddress })(req, res)
   })
+
+  server.dshToolboxToken = secret
+  return server
+}
+
+/** The origins this server actually listens on (all loopback spellings). */
+function originsFor(server, extraPorts = []) {
+  const address = server.address()
+  const port = address && typeof address === 'object' ? address.port : undefined
+  if (port === undefined) return []
+  const origins = [
+    'http://127.0.0.1:' + port,
+    'http://localhost:' + port,
+    'http://[::1]:' + port,
+  ]
+  for (const extra of extraPorts) {
+    if (Number.isFinite(extra)) {
+      origins.push('http://127.0.0.1:' + extra, 'http://localhost:' + extra, 'http://[::1]:' + extra)
+    }
+  }
+  return origins
+}
+
+/**
+ * Mount the route on the host's web server (P1-6: the same handler the matrix
+ * exercises, so "what is tested" and "what runs" cannot drift).
+ *
+ * FAIL CLOSED: without an explicit origin list and a token, nothing is
+ * registered at all.
+ *
+ * @param {object} options
+ * @param {{register: Function}} options.webServer
+ * @param {(id: string) => object} options.onDelete
+ * @param {string} options.token
+ * @param {string[]} options.origins - the REAL origins this host serves
+ * @param {boolean} [options.trustProxy]
+ * @returns {{registered: boolean, reason?: string, dispose?: Function, token: string}}
+ */
+export function registerArchiveRoutes({ webServer, onDelete, token, origins, trustProxy = false } = {}) {
+  if (!webServer || typeof webServer.register !== 'function') {
+    return { registered: false, reason: 'no web server', token: token || '' }
+  }
+  if (typeof token !== 'string' || token.length < 32) {
+    return { registered: false, reason: 'no route token configured', token: token || '' }
+  }
+  if (!Array.isArray(origins) || origins.length === 0) {
+    return { registered: false, reason: 'no allowed origins configured', token }
+  }
+
+  const guard = createRouteGuard({ allowedOrigins: origins, token, trustProxy })
+  const handler = createDeleteHandler({
+    guard,
+    onDelete,
+    peerOf: (req) => req.socket && req.socket.remoteAddress,
+  })
+
+  const route = { kind: 'exact', path: DELETE_PATH, handler }
+  const disposer = webServer.register(route)
+  return {
+    registered: true,
+    token,
+    guard,
+    dispose: typeof disposer === 'function' ? disposer : () => {},
+  }
 }
