@@ -64,9 +64,9 @@ export function mountArchiveRoutes({ webServer, token, origins, onDelete, regist
     // 3) the two routes the panel also needs, under the SAME guard and token.
     if (api && typeof api.list === 'function') {
       // list is a GET, unarchive a POST: one guard that allows both.\n      const apiGuard = createRouteGuard({ allowedOrigins: origins, token, trustProxy, methods: ['GET', 'POST'] })\n      const handlers = createApiHandlers({ guard: apiGuard, peerOf: (req) => req.socket && req.socket.remoteAddress, api })
-      const listDisposer = webServer.register({ kind: 'exact', path: LIST_PATH, handler: handlers.list })
+      const listDisposer = webServer.register({ kind: 'exact', method: 'GET', path: LIST_PATH, handler: handlers.list })
       if (typeof listDisposer === 'function') disposers.push(listDisposer)
-      const unarchiveDisposer = webServer.register({ kind: 'exact', path: UNARCHIVE_PATH, handler: handlers.unarchive })
+      const unarchiveDisposer = webServer.register({ kind: 'exact', method: 'POST', path: UNARCHIVE_PATH, handler: handlers.unarchive })
       if (typeof unarchiveDisposer === 'function') disposers.push(unarchiveDisposer)
     }
   } catch (error) {

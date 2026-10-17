@@ -327,7 +327,7 @@ export function registerArchiveRoutes({ webServer, onDelete, token, origins, tru
     peerOf: (req) => req.socket && req.socket.remoteAddress,
   })
 
-  const route = { kind: 'exact', path: DELETE_PATH, handler }
+  const route = { kind: 'exact', method: 'POST', path: DELETE_PATH, handler }
   const disposer = webServer.register(route)
   return {
     registered: true,
