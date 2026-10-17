@@ -101,7 +101,7 @@ export function mount(ctx, env) {
   // The body of the panel, in the same slot the plugin manager uses.
   env.track(ctx.slots.inject(MAIN_SLOT, () => ctx.slots.register({ name: MAIN_SLOT, key: PANEL_ID }, ArchiveView)))
   // The sidebar entry that selects it.
-  env.track(ctx.slots.inject(PANEL_SLOT, () => ctx.slots.register({ name: PANEL_SLOT, key: PANEL_ID }, SidebarRow)))
+  // A LIST slot wants id; the main slot wants key. They are different registries.\n  env.track(ctx.slots.inject(PANEL_SLOT, () => ctx.slots.register({ name: PANEL_SLOT, id: PANEL_ID, order: 200, label: () => '历史归档' }, SidebarRow)))
 
   return () => {
     panel.dispose()

@@ -2116,7 +2116,6 @@
   // src/client/features/archive-panel.js
   var PANEL_ID = "dsh-toolbox#archive";
   var MAIN_SLOT = "main";
-  var PANEL_SLOT2 = "sidebar.panellist";
   function archiveApiEnabled() {
     try {
       return cacheSwitches()?.archiveHttpApi === true;
@@ -2185,7 +2184,6 @@
       );
     }
     env.track(ctx.slots.inject(MAIN_SLOT, () => ctx.slots.register({ name: MAIN_SLOT, key: PANEL_ID }, ArchiveView)));
-    env.track(ctx.slots.inject(PANEL_SLOT2, () => ctx.slots.register({ name: PANEL_SLOT2, key: PANEL_ID }, SidebarRow)));
     return () => {
       panel.dispose();
     };
