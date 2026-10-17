@@ -111,9 +111,13 @@ export function mount(ctx, env) {
   }
 
   // The body of the panel, in the same slot the plugin manager uses.
-  env.track(ctx.slots.inject(MAIN_SLOT, () => ctx.slots.register({ name: MAIN_SLOT, key: PANEL_ID }, ArchiveView)))
+  const mainReg = ctx.slots.register({ name: MAIN_SLOT, key: PANEL_ID }, ArchiveView)
+  console.info('[dsh-toolbox] registered main panel, disposer =', typeof mainReg)
+  if (typeof mainReg === 'function') env.track(mainReg)
   // The sidebar entry that selects it.
-  // A LIST slot wants id; the main slot wants key. They are different registries.\n  env.track(ctx.slots.inject(PANEL_SLOT, () => ctx.slots.register({ name: PANEL_SLOT, id: PANEL_ID, order: 200, label: () => '历史归档', locale: 'dsh-toolbox' }, SidebarRow)))
+  // A LIST slot wants id; the main slot wants key. They are different registries.\n  const rowReg = ctx.slots.register({ name: PANEL_SLOT, id: PANEL_ID, order: 200, label: '历史归档' }, SidebarRow)
+  console.info('[dsh-toolbox] registered panellist row, disposer =', typeof rowReg)
+  if (typeof rowReg === 'function') env.track(rowReg)
 
   // Diagnostics: proves whether this feature mounted and what the slot registry
   // actually holds. Removed on dispose.

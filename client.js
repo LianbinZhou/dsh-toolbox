@@ -2193,7 +2193,11 @@
         "历史归档"
       );
     }
-    env.track(ctx.slots.inject(MAIN_SLOT, () => ctx.slots.register({ name: MAIN_SLOT, key: PANEL_ID }, ArchiveView)));
+    const mainReg = ctx.slots.register({ name: MAIN_SLOT, key: PANEL_ID }, ArchiveView);
+    console.info("[dsh-toolbox] registered main panel, disposer =", typeof mainReg);
+    if (typeof mainReg === "function") env.track(mainReg);
+    console.info("[dsh-toolbox] registered panellist row, disposer =", typeof rowReg);
+    if (typeof rowReg === "function") env.track(rowReg);
     const readEntries = () => {
       try {
         const list = typeof ctx.slots.entriesOfSlot === "function" ? ctx.slots.entriesOfSlot(PANEL_SLOT2) : void 0;
