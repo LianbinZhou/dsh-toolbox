@@ -133,7 +133,9 @@ export function createRouteGuard({ allowedOrigins = [], token, trustProxy = fals
       return refuse(401, 'missing or invalid token')
     }
 
-    if (!isJsonContentType(headers['content-type'])) {
+    // A GET has no body, so demanding JSON would reject every read-only call.
+    // Only methods that carry a body are held to the type rule.
+    if (method !== 'GET' && method !== 'HEAD' && !isJsonContentType(headers['content-type'])) {
       return refuse(415, 'content type must be application/json')
     }
     const declared = Number(headers['content-length'])
