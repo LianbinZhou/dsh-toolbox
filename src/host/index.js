@@ -106,8 +106,14 @@ export function apply(ctx, config) {
         return undefined
       }
     }
-    const adapter = createSessionAdapter({ registry: serviceOf('workspaceRegistry'), sessions: serviceOf('sessions') })
-    if (!adapterIsUsable(adapter)) return null
+    const registry = serviceOf('workspaceRegistry')
+    const sessions = serviceOf('sessions')
+    console.info('[dsh-toolbox] archive adapter probe: workspaceRegistry=' + (registry ? typeof registry : 'missing') + ', sessions=' + (sessions ? typeof sessions : 'missing'))
+    const adapter = createSessionAdapter({ registry, sessions })
+    if (!adapterIsUsable(adapter)) {
+      console.warn('[dsh-toolbox] archive adapter unusable; list/unarchive/delete answer 503')
+      return null
+    }
     try {
       archiveApi = createArchiveApi({ home: join(dshHome(), 'storages'), adapter }).api
     } catch (error) {
