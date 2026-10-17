@@ -327,7 +327,10 @@ export const SERVICE_CASES = [
       assert.match(phases, /deleting/)
       assert.match(phases, /trashed/)
       assert.match(phases, /cleaned/)
-      assert.match(phases, /done/)
+      // P0-1: a finished entry is PRUNED (no done tombstone), otherwise the
+      // journal grows by one record per deleted session forever.
+      assert.doesNotMatch(phases, /done/, 'a finished entry must be removed, not kept')
+      assert.deepEqual(world.journalEntries(), [], 'nothing is left behind')
     },
   },
   {
