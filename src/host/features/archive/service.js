@@ -259,8 +259,22 @@ export function createArchiveService(deps) {
     for (const entry of deps.journal.read()) {
       if (entry.phase === 'done') continue
       if (entry.phase === 'deleting') {
-        // The process died between the claim and the move. Nothing moved, so the
-        // claim is dropped and the session simply stays archived.
+        // Two different crashes wear the same journal state:
+        //   (a) the claim was written but the directory never moved  -> drop it
+        //   (b) the directory moved but the journal was not updated   -> adopt it
+        // The trash entry is the only evidence that tells them apart.
+        const moved = typeof deps.exists === 'function' && deps.exists(entry.trashPath)
+        if (moved) {
+          deps.journal.write(
+            deps.journal.read().map((current) =>
+              current.id === entry.id ? { ...current, phase: 'trashed', at: Date.now() } : current,
+            ),
+          )
+          const result = await finish(entry.id)
+          if (result.ok && !result.warning) healed.push(entry.id)
+          else pending.push(entry.id)
+          continue
+        }
         await withLock(entry.id, async () => {
           deps.journal.write(withoutEntry(deps.journal, entry.id))
         })

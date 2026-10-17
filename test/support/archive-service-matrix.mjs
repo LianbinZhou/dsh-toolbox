@@ -114,6 +114,7 @@ export function makeWorld(options = {}) {
         if (sessionDir === dir) dirs.delete(id)
       }
     },
+    exists: (path) => [...dirs.values()].includes(path) || trash.has(path),
     trashRoot: () => TRASH,
     sameVolume: () => options.sameVolume !== false,
     unarchive: (id) => {
