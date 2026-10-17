@@ -516,6 +516,23 @@
   var SLOT_KEY = "dsh-toolbox#toolbox";
   var RETRY_MS2 = 150;
   var MAX_RETRIES2 = 40;
+  function resolveValue(values, overlay, key) {
+    if (overlay && Object.prototype.hasOwnProperty.call(overlay, key)) return overlay[key] === true;
+    return !!(values && values[key] === true);
+  }
+  function isSwitchDisabled(ready, pending, key) {
+    if (!ready) return true;
+    return !!(pending && pending[key] === true);
+  }
+  function pruneOverlay(overlay, values) {
+    if (!overlay) return {};
+    if (!values) return overlay;
+    const out = {};
+    for (const key of Object.keys(overlay)) {
+      if (values[key] !== overlay[key]) out[key] = overlay[key];
+    }
+    return out;
+  }
   function valuesFromPropsForm(form) {
     try {
       if (!form || typeof form !== "object") return void 0;
@@ -560,30 +577,32 @@
   function createSettingsCard(ctx) {
     return function SettingsCard(props) {
       const [state, setState] = useState({ status: "loading", values: void 0, source: "" });
+      const [overlay, setOverlay] = useState({});
+      const [pending, setPending] = useState({});
       const [error, setError] = useState("");
-      const [busy, setBusy] = useState(false);
       useEffect(() => {
         let alive = true;
         let tries = 0;
         let unsubscribe;
         let timer;
-        const apply2 = (values2, source) => {
-          if (!alive || !values2) return true;
+        const publish = (values2, source) => {
+          if (!alive || !values2) return false;
           storeSwitches(values2);
           setState({ status: "ready", values: values2, source });
+          setOverlay((previous) => pruneOverlay(previous, values2));
           return true;
         };
         const attempt = () => {
           if (!alive) return;
           const fromProps = valuesFromPropsForm(props.form);
-          if (fromProps && apply2(fromProps, "props.form")) return;
+          if (fromProps && publish(fromProps, "props.form")) return;
           const picked = pickForm(ctx);
           const values2 = picked ? valuesOf(picked.form) : void 0;
-          if (values2 && apply2(values2, "configForms")) {
+          if (values2 && publish(values2, "configForms")) {
             try {
               unsubscribe = picked.form.subscribe(() => {
                 const next = valuesOf(picked.form);
-                if (next) apply2(next, "configForms");
+                if (next) publish(next, "configForms");
               });
             } catch (subscribeError) {
             }
@@ -600,30 +619,54 @@
           if (typeof unsubscribe === "function") {
             try {
               unsubscribe();
-            } catch (error2) {
+            } catch (unsubscribeError) {
             }
           }
         };
       }, [props.form]);
       const toggle = useCallback(
         (key, next) => {
-          if (busy) return;
-          setBusy(true);
+          setOverlay((previous) => Object.assign({}, previous, { [key]: next }));
+          setPending((previous) => Object.assign({}, previous, { [key]: true }));
           setError("");
+          const revert = () => {
+            setOverlay((previous) => {
+              const copy = Object.assign({}, previous);
+              delete copy[key];
+              return copy;
+            });
+          };
           try {
             Promise.resolve(writeSwitch(props, ctx, key, next)).then((ok) => {
-              if (ok === false) setError("服务拒绝了这次写入");
-            }).catch((writeError) => setError(String(writeError && writeError.message || writeError))).finally(() => setBusy(false));
+              if (ok === false) {
+                revert();
+                setError("服务拒绝了这次写入，开关已还原");
+              }
+            }).catch((writeError) => {
+              revert();
+              setError("写入失败：" + String(writeError && writeError.message || writeError));
+            }).finally(() => {
+              setPending((previous) => {
+                const copy = Object.assign({}, previous);
+                delete copy[key];
+                return copy;
+              });
+            });
           } catch (writeError) {
-            setError(String(writeError && writeError.message || writeError));
-            setBusy(false);
+            revert();
+            setError("写入失败：" + String(writeError && writeError.message || writeError));
+            setPending((previous) => {
+              const copy = Object.assign({}, previous);
+              delete copy[key];
+              return copy;
+            });
           }
         },
-        [busy, props, ctx]
+        [props, ctx]
       );
       if (props.view === "summary") {
         const values2 = state.values;
-        const on = values2 ? SWITCHES.filter((entry) => values2[entry.key] === true).length : 0;
+        const on = values2 ? SWITCHES.filter((entry) => resolveValue(values2, overlay, entry.key)).length : 0;
         return h("span", null, on + " / " + SWITCHES.length + " 个开关已开");
       }
       const values = state.values;
@@ -632,16 +675,22 @@
         "div",
         { style: { display: "flex", flexDirection: "column", gap: "10px", padding: "6px 0" } },
         ...SWITCHES.map(
-          (entry, index) => h(
+          (entry) => h(
             "label",
             {
               key: entry.key,
-              style: { display: "flex", alignItems: "flex-start", gap: "10px", cursor: ready ? "pointer" : "default" }
+              style: {
+                display: "flex",
+                alignItems: "flex-start",
+                gap: "10px",
+                cursor: ready ? "pointer" : "default",
+                opacity: pending[entry.key] ? 0.55 : 1
+              }
             },
             h("input", {
               type: "checkbox",
-              checked: ready ? values[entry.key] === true : false,
-              disabled: !ready || busy,
+              checked: resolveValue(values, overlay, entry.key),
+              disabled: isSwitchDisabled(ready, pending, entry.key),
               onChange: (event) => {
                 const next = !!(event && event.target && event.target.checked);
                 toggle(entry.key, next);

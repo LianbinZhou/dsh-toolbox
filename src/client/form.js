@@ -1,5 +1,5 @@
 /**
- * The settings card (fix for P0-2): the six switches on the plugin row page.
+ * The settings card (fix for P0-2, plus the "everything greys out" UX defect).
  *
  * Where it renders
  * ----------------
@@ -15,17 +15,25 @@
  *
  * Two value sources, both supported
  * ---------------------------------
- * - `ctx.configForms.get(entryId)` — the shared forms service: `getSnapshot()` to
- *   read `{ value }`, `set(key, bool)` to write.
  * - the slot prop `props.form`, whose shape is **`{ state, mutate }`**
- *   (`ConfigPageForm`), NOT a controller: read `state`, write with
- *   `mutate([{ op: 'set', path: [key], value }], revision)`.
+ *   (`ConfigPageForm`): read `state`, write with
+ *   `mutate([{ op: 'set', path: [key], value }], revision)`;
+ * - `ctx.configForms.get(entryId)`: `getSnapshot()` to read, `set(key, bool)` to write.
  *
- * Rules learned from the Spike and the S1 review
- * ----------------------------------------------
- * - A component that throws blanks the whole slot entry, so every read and write
- *   below is guarded and the card always draws a line.
- * - `configForms` can arrive late, so the binding retries instead of giving up.
+ * Switch feedback rules (learned from the first real screenshot)
+ * -------------------------------------------------------------
+ * The host write takes about a second. The first version used ONE global `busy`
+ * flag, so clicking a single switch greyed out all six until the round trip
+ * finished — the user reported "整列都会显示灰色停留约 1 秒".
+ *
+ * Now:
+ *   - **per-key** pending: only the switch you clicked is disabled;
+ *   - **optimistic value**: the checkbox flips immediately, and the real value
+ *     replaces it when the source catches up;
+ *   - a rejected write reverts that one switch and shows a message.
+ *
+ * A component that throws blanks the whole slot entry, so every read and write
+ * below is guarded and the card always draws something.
  */
 
 import { h, useCallback, useEffect, useState } from './runtime.js'
@@ -39,7 +47,43 @@ const MAX_RETRIES = 40
 
 export { SLOT, SLOT_KEY }
 
-/** Values out of the slot prop's `{ state, mutate }` shape, if it holds any. */
+/* ------------------------------------------------------------------ *
+ * pure helpers (unit-tested directly)                                 *
+ * ------------------------------------------------------------------ */
+
+/**
+ * The value a switch should display: the optimistic overlay wins until the
+ * source reports the same value.
+ * @param values - values from the source, may be undefined
+ * @param overlay - per-key optimistic values
+ * @param key - switch key
+ */
+export function resolveValue(values, overlay, key) {
+  if (overlay && Object.prototype.hasOwnProperty.call(overlay, key)) return overlay[key] === true
+  return !!(values && values[key] === true)
+}
+
+/** Only the switch that is being written is disabled; the others stay live. */
+export function isSwitchDisabled(ready, pending, key) {
+  if (!ready) return true
+  return !!(pending && pending[key] === true)
+}
+
+/** Drop overlay entries the source has caught up with, so nothing goes stale. */
+export function pruneOverlay(overlay, values) {
+  if (!overlay) return {}
+  if (!values) return overlay
+  const out = {}
+  for (const key of Object.keys(overlay)) {
+    if (values[key] !== overlay[key]) out[key] = overlay[key]
+  }
+  return out
+}
+
+/* ------------------------------------------------------------------ *
+ * source adapters                                                      *
+ * ------------------------------------------------------------------ */
+
 function valuesFromPropsForm(form) {
   try {
     if (!form || typeof form !== 'object') return undefined
@@ -62,8 +106,6 @@ function revisionOf(form) {
   try {
     const state = form && form.state
     if (!state) return undefined
-    // Two shapes exist in the wild: a controller with getSnapshot(), and a plain
-    // snapshot object carrying `revision` directly (ConfigPageForm's `state`).
     if (typeof state.getSnapshot === 'function') {
       const snapshot = state.getSnapshot()
       return snapshot && snapshot.revision
@@ -88,16 +130,16 @@ function writeSwitch(props, ctx, key, next) {
   throw new Error('no writable settings form')
 }
 
-/**
- * Build the card component for one page.
- * @param ctx - the client plugin context (needs `get('configForms')`)
- * @returns a React component for the `plugins.row.config` slot
- */
+/* ------------------------------------------------------------------ *
+ * the card                                                            *
+ * ------------------------------------------------------------------ */
+
 export function createSettingsCard(ctx) {
   return function SettingsCard(props) {
     const [state, setState] = useState({ status: 'loading', values: undefined, source: '' })
+    const [overlay, setOverlay] = useState({})
+    const [pending, setPending] = useState({})
     const [error, setError] = useState('')
-    const [busy, setBusy] = useState(false)
 
     // Bind to a value source; retries while configForms is still missing.
     useEffect(() => {
@@ -106,10 +148,11 @@ export function createSettingsCard(ctx) {
       let unsubscribe
       let timer
 
-      const apply = (values, source) => {
-        if (!alive || !values) return true
+      const publish = (values, source) => {
+        if (!alive || !values) return false
         storeSwitches(values)
         setState({ status: 'ready', values, source })
+        setOverlay((previous) => pruneOverlay(previous, values))
         return true
       }
 
@@ -117,18 +160,18 @@ export function createSettingsCard(ctx) {
         if (!alive) return
 
         const fromProps = valuesFromPropsForm(props.form)
-        if (fromProps && apply(fromProps, 'props.form')) return
+        if (fromProps && publish(fromProps, 'props.form')) return
 
         const picked = pickForm(ctx)
         const values = picked ? valuesOf(picked.form) : undefined
-        if (values && apply(values, 'configForms')) {
+        if (values && publish(values, 'configForms')) {
           try {
             unsubscribe = picked.form.subscribe(() => {
               const next = valuesOf(picked.form)
-              if (next) apply(next, 'configForms')
+              if (next) publish(next, 'configForms')
             })
           } catch (subscribeError) {
-            /* live updates unavailable; the initial values still render */
+            /* live updates unavailable; the values already rendered stay */
           }
           return
         }
@@ -145,7 +188,7 @@ export function createSettingsCard(ctx) {
         if (typeof unsubscribe === 'function') {
           try {
             unsubscribe()
-          } catch (error) {
+          } catch (unsubscribeError) {
             /* ignore */
           }
         }
@@ -154,27 +197,54 @@ export function createSettingsCard(ctx) {
 
     const toggle = useCallback(
       (key, next) => {
-        if (busy) return
-        setBusy(true)
+        // Optimistic: flip this one switch now; do not touch the others.
+        setOverlay((previous) => Object.assign({}, previous, { [key]: next }))
+        setPending((previous) => Object.assign({}, previous, { [key]: true }))
         setError('')
+
+        const revert = () => {
+          setOverlay((previous) => {
+            const copy = Object.assign({}, previous)
+            delete copy[key]
+            return copy
+          })
+        }
+
         try {
           Promise.resolve(writeSwitch(props, ctx, key, next))
             .then((ok) => {
-              if (ok === false) setError('服务拒绝了这次写入')
+              if (ok === false) {
+                revert()
+                setError('服务拒绝了这次写入，开关已还原')
+              }
             })
-            .catch((writeError) => setError(String((writeError && writeError.message) || writeError)))
-            .finally(() => setBusy(false))
+            .catch((writeError) => {
+              revert()
+              setError('写入失败：' + String((writeError && writeError.message) || writeError))
+            })
+            .finally(() => {
+              setPending((previous) => {
+                const copy = Object.assign({}, previous)
+                delete copy[key]
+                return copy
+              })
+            })
         } catch (writeError) {
-          setError(String((writeError && writeError.message) || writeError))
-          setBusy(false)
+          revert()
+          setError('写入失败：' + String((writeError && writeError.message) || writeError))
+          setPending((previous) => {
+            const copy = Object.assign({}, previous)
+            delete copy[key]
+            return copy
+          })
         }
       },
-      [busy, props, ctx],
+      [props, ctx],
     )
 
     if (props.view === 'summary') {
       const values = state.values
-      const on = values ? SWITCHES.filter((entry) => values[entry.key] === true).length : 0
+      const on = values ? SWITCHES.filter((entry) => resolveValue(values, overlay, entry.key)).length : 0
       return h('span', null, on + ' / ' + SWITCHES.length + ' 个开关已开')
     }
 
@@ -184,17 +254,23 @@ export function createSettingsCard(ctx) {
     return h(
       'div',
       { style: { display: 'flex', flexDirection: 'column', gap: '10px', padding: '6px 0' } },
-      ...SWITCHES.map((entry, index) =>
+      ...SWITCHES.map((entry) =>
         h(
           'label',
           {
             key: entry.key,
-            style: { display: 'flex', alignItems: 'flex-start', gap: '10px', cursor: ready ? 'pointer' : 'default' },
+            style: {
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: '10px',
+              cursor: ready ? 'pointer' : 'default',
+              opacity: pending[entry.key] ? 0.55 : 1,
+            },
           },
           h('input', {
             type: 'checkbox',
-            checked: ready ? values[entry.key] === true : false,
-            disabled: !ready || busy,
+            checked: resolveValue(values, overlay, entry.key),
+            disabled: isSwitchDisabled(ready, pending, entry.key),
             onChange: (event) => {
               const next = !!(event && event.target && event.target.checked)
               toggle(entry.key, next)
