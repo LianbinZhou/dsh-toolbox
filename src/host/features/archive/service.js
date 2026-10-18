@@ -201,6 +201,23 @@ export function createArchiveService(deps) {
 
   /** Finish a `trashed`/`cleaned` entry. Caller holds the lock. */
   async function finish(id) {
+    try {
+      return await finishInner(id)
+    } catch (error) {
+      const detail = String((error && error.message) || error).slice(0, 160)
+      console.error('[dsh-toolbox] finish 抛错 ' + id + ': ' + detail)
+      try {
+        deps.journal.update((entries) => entries.map((current) =>
+          current.id === id ? { ...current, phase: 'trashed', lastError: 'threw: ' + detail } : current,
+        ))
+      } catch (writeError) {
+        console.error('[dsh-toolbox] 连 lastError 都写不进去', writeError)
+      }
+      return { ok: false, status: 500, reason: 'finish-failed', detail }
+    }
+  }
+
+  async function finishInner(id) {
     const entry = findEntry(deps.journal, id)
     if (!entry) return { ok: true, removedDir: true }
     if (!entryIsSane(entry)) return { ok: false, status: 409, reason: 'journal-corrupt' }
