@@ -12,6 +12,7 @@
  *   `layout.selectPanel: main panel "dsh-toolbox#archive" is not registered`
  */
 
+import { createDshAdapter, callOptional } from '../dsh-adapter.js'
 import { h, useEffect, useState } from '../runtime.js'
 import { createArchiveClient } from './archive-client.js'
 import { createArchivePanel } from './archive-panel-model.js'
@@ -76,17 +77,19 @@ export function archiveApiEnabled() {
  * 「未分组」不是 workspace 表算出来的：它是 sessions.list 减去各工作区成员。
  * 删掉目录只改了磁盘，Session 列表还是旧快照——不刷这一步，侧栏那一行就永远在。
  */
-export async function refreshHostSessionsOf(ctx) {
+export async function refreshHostSessionsOf(ctx, adapter) {
+  // 所有官方访问都过防腐层：接口没了只降级（侧栏需要手动刷新），不让插件崩。
+  const dsh = adapter ?? createDshAdapter(ctx)
+  const sessions = dsh.get('sessions')
+  if (sessions === undefined || typeof sessions.refresh !== 'function') return false
+  // refresh() 通常没有返回值：没抛就算成功；抛了如实返回 false（侧栏需手动刷新）。
   try {
-    const sessions = ctx.sessions ?? (typeof ctx.get === 'function' ? ctx.get('sessions') : undefined)
-    if (sessions && typeof sessions.refresh === 'function') {
-      await sessions.refresh()
-      return true
-    }
+    await sessions.refresh()
+    return true
   } catch (error) {
     console.warn('[dsh-toolbox] sessions.refresh 失败（侧栏可能要手动刷新）', error)
+    return false
   }
-  return false
 }
 
 export function mount(ctx, env) {

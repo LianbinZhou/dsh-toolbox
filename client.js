@@ -1,5 +1,72 @@
 "use strict";
 (() => {
+  // src/client/dsh-adapter.js
+  var SERVICE_CHECKS = Object.freeze({
+    slots: (service) => typeof service?.register === "function" && typeof service?.inject === "function",
+    sessions: (service) => typeof service?.refresh === "function" || typeof service?.list === "object",
+    configForms: (service) => typeof service?.get === "function",
+    layout: (service) => typeof service?.selectPanel === "function",
+    locale: (service) => typeof service?.register === "function"
+  });
+  var REQUIRED_SERVICES = Object.freeze(["slots"]);
+  function createDshAdapter(ctx, options = {}) {
+    const label = options.label ?? "dsh-toolbox";
+    const logger = options.logger ?? console;
+    const warned = /* @__PURE__ */ new Set();
+    const missing = [];
+    const degraded = [];
+    const warnOnce = (service, detail) => {
+      if (warned.has(service)) return;
+      warned.add(service);
+      try {
+        logger.warn("[" + label + "] 官方服务不可用: " + service + "（" + detail + "）—— 相关子功能已禁用，插件继续运行");
+      } catch (error) {
+      }
+    };
+    const get = (name) => {
+      const check = SERVICE_CHECKS[name];
+      let service;
+      try {
+        service = ctx ? ctx[name] : void 0;
+      } catch (error) {
+        service = void 0;
+      }
+      if (service === void 0 && ctx && typeof ctx.get === "function") {
+        try {
+          service = ctx.get(name);
+        } catch (error) {
+          service = void 0;
+        }
+      }
+      if (service === void 0) {
+        if (!missing.includes(name)) missing.push(name);
+        warnOnce(name, "不存在");
+        return void 0;
+      }
+      if (typeof check === "function" && !check(service)) {
+        if (!degraded.includes(name)) degraded.push(name);
+        warnOnce(name, "形状不匹配，可能是官方改了接口");
+        return void 0;
+      }
+      return service;
+    };
+    const require2 = (name) => {
+      const service = get(name);
+      if (service === void 0 && REQUIRED_SERVICES.includes(name)) {
+        throw new Error(label + ": 缺少必需的官方服务 " + name);
+      }
+      return service;
+    };
+    const selfCheck = () => ({
+      label,
+      ok: missing.length === 0 && degraded.length === 0,
+      missing: [...missing],
+      degraded: [...degraded],
+      available: Object.keys(SERVICE_CHECKS).filter((name) => missing.indexOf(name) < 0 && degraded.indexOf(name) < 0)
+    });
+    return { get, require: require2, selfCheck, missing, degraded };
+  }
+
   // src/client/runtime.js
   var runtime;
   function installRuntime(react) {
@@ -2378,17 +2445,17 @@
       return false;
     }
   }
-  async function refreshHostSessionsOf(ctx) {
+  async function refreshHostSessionsOf(ctx, adapter) {
+    const dsh = adapter ?? createDshAdapter(ctx);
+    const sessions = dsh.get("sessions");
+    if (sessions === void 0 || typeof sessions.refresh !== "function") return false;
     try {
-      const sessions = ctx.sessions ?? (typeof ctx.get === "function" ? ctx.get("sessions") : void 0);
-      if (sessions && typeof sessions.refresh === "function") {
-        await sessions.refresh();
-        return true;
-      }
+      await sessions.refresh();
+      return true;
     } catch (error) {
       console.warn("[dsh-toolbox] sessions.refresh 失败（侧栏可能要手动刷新）", error);
+      return false;
     }
-    return false;
   }
   function mount4(ctx, env) {
     if (!ctx.slots || typeof ctx.slots.register !== "function" || typeof ctx.slots.inject !== "function") {
@@ -3212,12 +3279,14 @@
       ),
       "toolbox: settings card on the plugin row"
     );
+    const dsh = createDshAdapter(ctx);
     window.__DSH_TOOLBOX__ = {
       phaseOf: container.phaseOf,
       liveCount: container.liveCount,
       mounts: probe.count,
       listeners: host.listenerCount,
-      slot: SLOT + "#" + SLOT_KEY
+      slot: SLOT + "#" + SLOT_KEY,
+      selfCheck: dsh.selfCheck
     };
     return ctx.effect(() => () => {
       try {

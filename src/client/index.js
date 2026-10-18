@@ -9,6 +9,7 @@
  *   - the settings card registers `plugins.row.config` under `dsh-toolbox#toolbox`.
  */
 
+import { createDshAdapter } from './dsh-adapter.js'
 import { installRuntime, h } from './runtime.js'
 import { createContainer } from './container.js'
 import { createFeatures, createFeatureProbe } from './features.js'
@@ -52,12 +53,16 @@ function apply(ctx) {
     'toolbox: settings card on the plugin row',
   )
 
+  // 官方接口自检：缺了哪个服务、哪个形状不匹配，一眼能看到。
+  // 真机排障先看这里，不要从「白屏」猜起。
+  const dsh = createDshAdapter(ctx)
   window.__DSH_TOOLBOX__ = {
     phaseOf: container.phaseOf,
     liveCount: container.liveCount,
     mounts: probe.count,
     listeners: host.listenerCount,
     slot: SLOT + '#' + SLOT_KEY,
+    selfCheck: dsh.selfCheck,
   }
 
   return ctx.effect(() => () => {
