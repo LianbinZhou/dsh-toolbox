@@ -79,6 +79,7 @@ export function createServiceDeps({ home, adapter, maxProtected = 200, ttlDays =
     scrubCache: (id) => adapter.scrubCache?.(id),
     snapshotWorkspace: (id) => adapter.snapshotWorkspace?.(id),
     reattach: (snapshot) => adapter.reattach?.(snapshot),
+    pathExists: (target) => existsSync(target),
     scrubCache: (id) => adapter.scrubCache?.(id),
     trashRoot: () => trash,
     /** 会话目录是否仍在 sessions 根内：真实路径解析 + 链接拦截。 */

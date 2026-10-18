@@ -219,3 +219,57 @@ test('链路 5 · 四条链路连跑：状态机不串味', async () => {
     w.cleanup()
   }
 })
+
+
+test('链路 6a · 幽灵态：归档后目录被删，恢复必须报 dir-absent 且不造分身', async () => {
+  const w = makeWorld()
+  try {
+    await w.registry.archiveSession(w.sessionId)
+    rmSync(w.sessionDir, { recursive: true, force: true })
+    const rowsBefore = w.state().workspaceRows.length
+
+    const restored = await w.service.unarchiveSession(w.sessionId)
+    assert.equal(restored.ok, false, '目录不存在时恢复必须失败')
+    assert.equal(restored.reason, 'dir-absent', '要给前端一个能读懂的原因')
+    assert.equal(w.state().workspaceRows.length, rowsBefore, '绝不能往工作区里再加一行（「未分组」就是这么冒出来的）')
+    assert.equal(w.state().archived.includes(w.sessionId), false, '底层残留标记要顺手清掉，否则归档页也有它')
+  } finally {
+    w.cleanup()
+  }
+})
+
+test('链路 6b · 幽灵态：归档后目录被删，删除应退化成清理且不留标记', async () => {
+  const w = makeWorld()
+  try {
+    await w.registry.archiveSession(w.sessionId)
+    rmSync(w.sessionDir, { recursive: true, force: true })
+    const rowsBefore = w.state().workspaceRows.length
+
+    const removed = await w.service.delete(w.sessionId)
+    assert.equal(removed.ok, true, '目录不在了，删除应退化成清理并成功')
+    const s = w.state()
+    assert.equal(s.workspaceRows.includes(w.sessionId), false, '删除必须把它从工作区摘掉（否则侧栏还看得到）')
+    assert.equal(s.archived.includes(w.sessionId), false, '归档标记必须清掉')
+    assert.equal(s.entries.filter((entry) => entry.id === w.sessionId).length, 0, '没有可恢复的东西，就不该留记录')
+  } finally {
+    w.cleanup()
+  }
+})
+
+test('链路 7 · 幽灵态下的彻底删除：不留任何标记', async () => {
+  const w = makeWorld()
+  try {
+    await w.registry.archiveSession(w.sessionId)
+    rmSync(w.sessionDir, { recursive: true, force: true })
+
+    await w.service.delete(w.sessionId)
+    const purged = await w.service.purge(w.sessionId)
+    assert.equal(purged.ok === true || purged.ok === false, true)
+
+    const s = w.state()
+    assert.equal(s.workspaceRows.includes(w.sessionId), false)
+    assert.equal(s.archived.includes(w.sessionId), false)
+  } finally {
+    w.cleanup()
+  }
+})

@@ -524,6 +524,17 @@ export function createArchiveService(deps) {
     if (entry.phase !== 'trashed' && entry.phase !== 'cleaned') {
       return { ok: false, status: 409, reason: REASONS.IN_PROGRESS }
     }
+    // 幽灵态兜底：垃圾箱里要是没有东西，恢复只会在工作区里造出一行空记录，
+    // 用户看到的就是「回收站有一份、未分组又冒一份」。
+    // 这里直接拒绝，并把底层残留标记清干净。
+    try {
+      if (typeof deps.pathExists === 'function' && !deps.pathExists(entry.trashPath)) {
+        await clearArchiveMarkers(id)
+        return { ok: false, status: 409, reason: 'dir-absent' }
+      }
+    } catch (error) {
+      /* 检查失败不拦恢复，交给下面的 rename 兜底 */
+    }
     try {
       deps.renamePath(entry.trashPath, entry.originalPath)
     } catch (error) {
@@ -628,6 +639,17 @@ export function createArchiveService(deps) {
             return { ok: true, restored: true, warning: 'cleanup-pending' }
           }
           return { ok: true, restored: true }
+        }
+        // 幽灵态兜底：目录已经不在了，就别再「取消归档」——那会让它变成一条
+        // 没有文件的工作区记录，用户看到的就是「未分组」里冒出一份。
+        try {
+          const probed = typeof deps.probe === 'function' ? deps.probe(id) : { state: 'present' }
+          if (probed && probed.state === 'absent') {
+            await clearArchiveMarkers(id)
+            return { ok: false, status: 409, reason: 'dir-absent' }
+          }
+        } catch (error) {
+          /* 探测失败不拦，交给下面的常规分支 */
         }
         if (!deps.readArchived().includes(id)) {
           return { ok: false, status: 404, reason: REASONS.NOT_ARCHIVED }
