@@ -28,6 +28,7 @@ const CLIENT_REASON_TEXT = Object.freeze({
   'network-error': '网络错误：宿主可能正在重启',
   disposed: '面板已卸载，请刷新页面',
   'archive-session-adapter-unavailable': '宿主还没接上会话服务，归档接口暂不可用',
+  'http-401': '宿主还是旧代码（回收箱接口未加载）：请重启 DSH，然后刷新页面',
   'http-404': '接口没有注册：请打开第 7 个开关',
   'http-503': '服务未就绪',
 })
