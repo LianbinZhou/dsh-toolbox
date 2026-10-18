@@ -51,3 +51,31 @@ test('trash · 返回保留天数与 protectedCount，且不含路径/nonce', as
     assert.equal(text.includes(banned), false, '绝不能出现 ' + banned)
   }
 })
+
+
+test('4.5 · journal 损坏时 GET /trash 必须 fail closed', async () => {
+  const { json } = await getTrash({
+    list: async () => ({ ok: true, rows: [] }),
+    trash: async () => ({ ok: false, reason: 'journal-corrupt' }),
+  })
+  assert.equal(json.ok, false)
+  assert.equal(json.reason, 'journal-corrupt', '不能假装回收箱是空的')
+})
+
+test('4.5 · 服务层带路径的 reason 不会原样出网', async () => {
+  const { text } = await getTrash({
+    list: async () => ({ ok: true, rows: [] }),
+    trash: async () => ({ ok: false, reason: 'C:/secret/trash/x ENOENT' }),
+  })
+  assert.equal(text.includes('secret'), false)
+  assert.equal(text.includes('ENOENT'), false)
+})
+
+test('4.5 · 响应带 maxProtected', async () => {
+  const { json } = await getTrash({
+    list: async () => ({ ok: true, rows: [] }),
+    trash: async () => ({ ok: true, rows: [], protectedCount: 3, keptDays: 7, maxProtected: 200 }),
+  })
+  assert.equal(json.maxProtected, 200)
+  assert.equal(json.protectedCount, 3)
+})

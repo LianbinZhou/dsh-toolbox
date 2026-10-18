@@ -10,6 +10,7 @@
  * the action differs.
  */
 
+import { toWireReason } from '../../../shared/reasons.js'
 import { CSRF_HEADER, CSRF_VALUE, MAX_BODY_BYTES, TOKEN_HEADER } from './route-guard.js'
 
 export const LIST_PATH = '/api/archive-manager/list'
@@ -103,7 +104,9 @@ export function createApiHandlers({ guard, peerOf, api }) {
         }
         if (typeof value.protectedCount === 'number') body.protectedCount = value.protectedCount
         if (typeof value.keptDays === 'number') body.keptDays = value.keptDays
-        if (!ok) body.reason = typeof value.reason === 'string' ? value.reason : 'request-failed'
+        if (typeof value.maxProtected === 'number') body.maxProtected = value.maxProtected
+        // 与删除同一条规则：内部码必须经过共享表，不能原样出网。
+        if (!ok) body.reason = toWireReason(value.reason)
         respond(res, ok ? 200 : 409, body)
       })
       .catch((error) => {
@@ -146,6 +149,11 @@ export function createApiHandlers({ guard, peerOf, api }) {
 
     /** POST：把垃圾桶里的会话放回原位。 */
     restore(req, res) {
+      if (String(req.method || '').toUpperCase() !== 'POST') {
+        respond(res, 405, { ok: false, error: 'method not allowed' })
+        req.resume()
+        return
+      }
       if (!authorize(req, res)) return
       readJsonBody(req, res, (parsed) => {
         const id = typeof parsed.sessionId === 'string' ? parsed.sessionId : ''
@@ -155,6 +163,11 @@ export function createApiHandlers({ guard, peerOf, api }) {
 
     /** POST：彻底清空一条（必须显式 confirm）。 */
     purge(req, res) {
+      if (String(req.method || '').toUpperCase() !== 'POST') {
+        respond(res, 405, { ok: false, error: 'method not allowed' })
+        req.resume()
+        return
+      }
       if (!authorize(req, res)) return
       readJsonBody(req, res, (parsed) => {
         if (parsed.confirm !== true) {

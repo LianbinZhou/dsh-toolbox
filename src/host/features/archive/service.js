@@ -427,6 +427,10 @@ export function createArchiveService(deps) {
        * 绝不返回 trashPath / originalPath / nonce —— 那是内部布局信息。
        */
       listTrash() {
+        // journal 坏了就不能假装「回收箱是空的」。
+        if (typeof deps.journal.health === 'function' && deps.journal.health().corrupt) {
+          return { ok: false, reason: 'journal-corrupt' }
+        }
         const rows = []
         const ttl = Number.isFinite(deps.trashKeptDays) ? deps.trashKeptDays : 7
         for (const entry of deps.journal.read()) {
@@ -438,7 +442,8 @@ export function createArchiveService(deps) {
             at: typeof entry.at === 'number' ? entry.at : 0,
           })
         }
-        return { ok: true, rows, protectedCount: rows.length, keptDays: ttl }
+        const maxProtected = Number.isFinite(deps.maxProtected) ? deps.maxProtected : 200
+        return { ok: true, rows, protectedCount: rows.length, keptDays: ttl, maxProtected }
       },
 
     delete: deleteSession,
