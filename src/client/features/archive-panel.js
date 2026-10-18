@@ -92,76 +92,109 @@ export function mount(ctx, env) {
   function ArchiveView() {
     const [view, setView] = useState(() => panel.view())
     const [busy, setBusy] = useState(false)
-
     const sync = () => setView(panel.view())
 
     useEffect(() => {
       let live = true
-      void panel.refresh().then(() => {
-        if (live) sync()
-      })
-      return () => {
-        live = false
-      }
+      void panel.refresh().then(() => { if (live) sync() })
+      return () => { live = false }
     }, [])
 
     const run = (action) => async () => {
       setBusy(true)
-      await action()
-      if (live()) sync()
-      setBusy(false)
+      try {
+        await action()
+      } finally {
+        sync()
+        setBusy(false)
+      }
     }
-    const live = () => true
+    const dangerStyle = { color: '#b3261e', borderColor: '#b3261e', fontWeight: '600' }
+    const rowTitle = (row, extra) =>
+      h('span', { class: 'dsh-toolbox-archive-title' }, [
+        h('strong', null, row.label),
+        h('div', { class: 'dsh-toolbox-archive-id' }, extra),
+      ])
 
     return h('div', { class: 'dsh-toolbox-archive' }, [
       h('header', null, [
         h('strong', null, '历史归档'),
-        h('span', { class: 'dsh-toolbox-archive-count' }, view.rows.length === 0 ? '共 0 条' : `共 ${view.rows.length} 条`),
+        h('span', { class: 'dsh-toolbox-archive-count' }, view.view === 'trash'
+          ? '回收箱 ' + (view.trash?.protectedCount ?? 0) + ' / ' + (view.trash?.maxProtected ?? 200)
+          : (view.rows.length === 0 ? '共 0 条' : '共 ' + view.rows.length + ' 条')),
+      ]),
+      // 二级页签：不新增侧栏入口，只在面板内切换。
+      h('div', { class: 'dsh-toolbox-archive-tabs' }, [
+        h('button', {
+          type: 'button',
+          disabled: busy,
+          'aria-pressed': view.view === 'archive' ? 'true' : 'false',
+          onClick: () => { panel.switchTo('archive'); void panel.refresh().then(sync) },
+        }, '归档'),
+        h('button', {
+          type: 'button',
+          disabled: busy,
+          'aria-pressed': view.view === 'trash' ? 'true' : 'false',
+          onClick: () => { panel.switchTo('trash'); void panel.refreshTrash().then(sync) },
+        }, '回收箱'),
       ]),
       view.message ? h('p', { class: 'dsh-toolbox-archive-note' }, view.message) : null,
-      view.pending
-        ? h('div', { class: 'dsh-toolbox-archive-confirm' }, [
-            h('span', null, '移入回收箱（保留 7 天，可恢复）'),
-            h(
-              'button',
-              {
-                type: 'button',
-                style: { color: '#b3261e', borderColor: '#b3261e', fontWeight: '600' },
-                onClick: run(() => panel.confirmRemove()),
-              },
-              '入回收箱',
-            ),
-            h('button', { type: 'button', onClick: () => { panel.cancelRemove(); sync() } }, '取消'),
+
+      view.view === 'archive'
+        ? h('div', null, [
+            view.pending
+              ? h('div', { class: 'dsh-toolbox-archive-confirm' }, [
+                  h('span', null, '移入回收箱（保留 7 天，可恢复）'),
+                  h('button', { type: 'button', style: dangerStyle, onClick: run(() => panel.confirmRemove()) }, '入回收箱'),
+                  h('button', { type: 'button', onClick: () => { panel.cancelRemove(); sync() } }, '取消'),
+                ])
+              : null,
+            view.rows.length === 0 && !view.message
+              ? h('p', { class: 'dsh-toolbox-archive-empty' }, '没有归档会话')
+              : null,
+            h('ul', null, view.rows.map((row) =>
+              h('li', { key: row.id }, [
+                rowTitle(row, row.id),
+                h('button', { type: 'button', disabled: busy || !view.canDelete, onClick: run(() => panel.unarchive(row.id)) }, '恢复'),
+                h('button', {
+                  type: 'button',
+                  class: 'danger',
+                  style: dangerStyle,
+                  disabled: busy || !view.canDelete,
+                  onClick: () => { panel.askRemove(row.id); sync() },
+                }, '删除'),
+              ]),
+            )),
           ])
         : null,
-      view.rows.length === 0 && !view.message ? h('p', { class: 'dsh-toolbox-archive-empty' }, '没有归档会话') : null,
-      h(
-        'ul',
-        null,
-        view.rows.map((row) =>
-          h('li', { key: row.id }, [
-            h('span', { class: 'dsh-toolbox-archive-title' }, [
-              h('strong', null, row.label),
-              h('div', { class: 'dsh-toolbox-archive-id' }, row.id),
-            ]),
-            h('button', { type: 'button', disabled: busy || !view.canDelete, onClick: run(() => panel.unarchive(row.id)) }, '恢复'),
-            h(
-              'button',
-              {
-                type: 'button',
-                class: 'danger',
-                disabled: busy || !view.canDelete,
-                onClick: () => {
-                  // 只提问，不执行：真正的动作在确认条的「入回收箱」上。
-                  panel.askRemove(row.id)
-                  sync()
-                },
-              },
-              '删除',
-            ),
-          ]),
-        ),
-      ),
+
+      view.view === 'trash'
+        ? h('div', null, [
+            view.purgePending
+              ? h('div', { class: 'dsh-toolbox-archive-confirm' }, [
+                  h('span', null, '物理删除，无法恢复。确定吗？'),
+                  h('button', { type: 'button', style: dangerStyle, onClick: run(() => panel.confirmPurge()) }, '彻底删除'),
+                  h('button', { type: 'button', onClick: () => { panel.cancelPurge(); sync() } }, '取消'),
+                ])
+              : null,
+            view.trash.rows.length === 0 && !view.message
+              ? h('p', { class: 'dsh-toolbox-archive-empty' }, '回收箱是空的')
+              : null,
+            h('ul', null, view.trash.rows.map((row) =>
+              h('li', { key: row.id }, [
+                rowTitle(row, String(row.phase) + ' · 剩余 ' + row.keptDays + ' 天'),
+                h('button', { type: 'button', disabled: busy, onClick: run(() => panel.restoreTrash(row.id)) }, '恢复'),
+                h('button', {
+                  type: 'button',
+                  class: 'danger',
+                  style: dangerStyle,
+                  disabled: busy,
+                  onClick: () => { panel.askPurge(row.id); sync() },
+                }, '彻底删除'),
+              ]),
+            )),
+          ])
+        : null,
     ])
   }
 
