@@ -238,6 +238,7 @@ export function mountPluginZh({ locale = 'zh', doc, win } = {}) {
   }
 
   const pass = (root) => {
+    if (!enabled) return 0
     if (!root || !documentRef || !documentRef.body || disposed) return 0
     state.lastPass = 0
     state.passes += 1
@@ -304,7 +305,7 @@ export function mountPluginZh({ locale = 'zh', doc, win } = {}) {
   }
 
   const runNow = () => {
-    if (disposed) return 0
+    if (disposed || !enabled) return 0
     const changed = pass(documentRef.body)
     if (changed > 0) {
       toast(state.replaced)
@@ -325,8 +326,14 @@ export function mountPluginZh({ locale = 'zh', doc, win } = {}) {
   const begin = () => {
     if (disposed) return
     if (!documentRef || !documentRef.body) return
+    // 界面语言不是中文：一次都不许翻。
+    // （这里以前无条件跑 runNow()，会把英文界面的插件描述瞬间翻成中文。）
+    if (!enabled) {
+      console.info('[dsh-toolbox] 插件汉化：界面语言不是中文，跳过')
+      return
+    }
     runNow()
-    if (enabled && typeof MutationObserver === 'function') {
+    if (typeof MutationObserver === 'function') {
       observer = new MutationObserver(schedule)
       observer.observe(documentRef.body, { childList: true, subtree: true, characterData: true })
     }

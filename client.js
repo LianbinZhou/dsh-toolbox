@@ -2830,6 +2830,7 @@
       return false;
     };
     const pass = (root) => {
+      if (!enabled) return 0;
       if (!root || !documentRef || !documentRef.body || disposed) return 0;
       state.lastPass = 0;
       state.passes += 1;
@@ -2893,7 +2894,7 @@
       }
     };
     const runNow = () => {
-      if (disposed) return 0;
+      if (disposed || !enabled) return 0;
       const changed = pass(documentRef.body);
       if (changed > 0) {
         toast(state.replaced);
@@ -2912,8 +2913,12 @@
     const begin = () => {
       if (disposed) return;
       if (!documentRef || !documentRef.body) return;
+      if (!enabled) {
+        console.info("[dsh-toolbox] 插件汉化：界面语言不是中文，跳过");
+        return;
+      }
       runNow();
-      if (enabled && typeof MutationObserver === "function") {
+      if (typeof MutationObserver === "function") {
         observer = new MutationObserver(schedule);
         observer.observe(documentRef.body, { childList: true, subtree: true, characterData: true });
       }

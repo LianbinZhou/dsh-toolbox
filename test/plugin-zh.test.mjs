@@ -145,3 +145,66 @@ test('mount · 非中文界面不工作（且 dispose 安全）', () => {
   const handle = mountPluginZh({ locale: 'en' })
   assert.doesNotThrow(() => handle.dispose())
 })
+
+
+/* ---------- Pi 要求：真实 DOM 下的语言守卫 ---------- */
+
+/** 最小 DOM 替身：够 mountPluginZh 走一遍 pass()。 */
+function makeDom(initialText) {
+  const textNode = {
+    nodeType: 3,
+    nodeValue: initialText,
+    parentElement: { tagName: 'DIV', hasAttribute: () => false },
+    isConnected: true,
+  }
+  let served = false
+  const body = {
+    nodeType: 1,
+    parentElement: null,
+    hasAttribute: () => false,
+    appendChild: () => {},
+  }
+  const doc = {
+    body,
+    createTreeWalker() {
+      return {
+        nextNode() {
+          if (served) return null
+          served = true
+          return textNode
+        },
+      }
+    },
+    createElement: () => ({ style: {}, remove: () => {} }),
+    getElementById: () => null,
+    addEventListener: () => {},
+  }
+  return { doc, textNode }
+}
+
+test('DOM · locale=en 时，英文文本绝不能被翻成中文', () => {
+  const { doc, textNode } = makeDom(EN)
+  const handle = mountPluginZh({ locale: 'en', doc, win: undefined })
+  assert.equal(textNode.nodeValue, EN, '英文界面必须原样不动')
+  assert.equal(handle.state.replaced, 0, '一次替换都不该发生')
+  assert.doesNotThrow(() => handle.dispose())
+})
+
+test('DOM · locale=zh 时翻译，dispose 后还原', () => {
+  const { doc, textNode } = makeDom(EN)
+  const handle = mountPluginZh({ locale: 'zh', doc, win: undefined })
+  assert.equal(textNode.nodeValue, ZH, '中文界面应翻译')
+  assert.ok(handle.state.replaced >= 1)
+  const restored = handle.dispose()
+  assert.equal(restored, 1)
+  assert.equal(textNode.nodeValue, EN, 'dispose 后必须还原英文')
+})
+
+test('DOM · locale=en 反复挂载也不影响文本', () => {
+  const { doc, textNode } = makeDom(EN)
+  for (let i = 0; i < 3; i++) {
+    const handle = mountPluginZh({ locale: 'en', doc })
+    handle.dispose()
+    assert.equal(textNode.nodeValue, EN)
+  }
+})
