@@ -25,6 +25,15 @@ export async function sweepExpiredTrash({ journal, service, ttlDays = 7, now = D
   const result = { scanned: 0, purged: 0, failed: 0 }
   if (!journal || typeof journal.read !== 'function' || !service || typeof service.purge !== 'function') return result
 
+  // 先把「删到一半」的记录收尾，再谈清理；否则 trashed 是待办，不是垃圾。
+  if (typeof service.heal === 'function') {
+    try {
+      await service.heal()
+    } catch (error) {
+      /* heal 失败不阻塞清理，但不会把 trashed 当垃圾 */
+    }
+  }
+
   let entries = []
   try {
     entries = journal.read()

@@ -30,6 +30,37 @@ import { sameToken } from './token-route.js'
 
 export const DELETE_PATH = '/api/archive-manager/delete'
 export const MAX_BODY_BYTES = 64 * 1024
+
+/**
+ * 可以安全送到前端的原因码。
+ *
+ * 只有这张表里的码原样透传；其余一律变成 request-failed。
+ * 这样服务层的错误原文（可能带绝对路径、异常消息）不会顺着网线跑出去，
+ * 而前端又能拿到具体原因显示成中文。
+ */
+export const PUBLIC_REASONS = Object.freeze(
+  new Set([
+    'live',
+    'not-archived',
+    'invalid-id',
+    'in-progress',
+    'already-deleted',
+    'trash-full',
+    'journal-corrupt',
+    'cross-device',
+    'unsafe-trash-root',
+    'claim-failed',
+    'probe-failed',
+    'remove-failed',
+    'restore-failed',
+    'cleanup-pending',
+  ]),
+)
+
+/** 把一个原因码变成可以出网的值。 */
+export function publicReason(reason) {
+  return typeof reason === 'string' && PUBLIC_REASONS.has(reason) ? reason : 'request-failed'
+}
 /** Forces a preflight; it is NOT a credential. */
 export const CSRF_HEADER = 'x-dsh-toolbox'
 export const CSRF_VALUE = '1'
@@ -236,7 +267,13 @@ export function createDeleteHandler({ guard, onDelete, peerOf }) {
           recoverable: value.recoverable === true,
           keptDays: Number.isFinite(value.keptDays) ? value.keptDays : undefined,
         }
-          if (!ok) body.error = 'delete refused'
+          if (!ok) {
+          body.error = 'delete refused'
+          // 透传稳定码；白名单之外的都收敛成 request-failed。
+          body.reason = publicReason(value.reason)
+        } else if (typeof value.reason === 'string') {
+          body.reason = publicReason(value.reason)
+        }
           else if (value.warning !== undefined) body.warning = 'deleted with warnings'
           respond(res, ok ? 200 : 409, body)
         })

@@ -113,14 +113,30 @@ export function createArchiveService(deps) {
    * An entry read back from disk is untrusted input: it may have been truncated,
    * edited, or written by an older version. Fail closed rather than acting on it.
    */
+  /**
+   * 从磁盘读回的 entry 是不可信输入：可能被改过、被截断、或被写坏。
+   *
+   * 两条路径都要校验，缺一条就是穿越口子：
+   *   - trashPath 必须以垃圾箱根开头（字符串层面）；
+   *   - originalPath 的末段必须正好是这条会话的 id，且不含 ..；
+   *     否则把 originalPath 改成 ../../outside 就能让恢复写到任意位置。
+   */
   function entryIsSane(entry) {
     if (!entry || typeof entry !== 'object') return false
     if (!isSafeSessionId(entry.id)) return false
     if (typeof entry.trashPath !== 'string' || typeof entry.originalPath !== 'string') return false
+
     const root = String(deps.trashRoot())
-  /** 垃圾箱保留天数，到期才由清理器物理清空。 */
-  const keptDays = Number.isFinite(deps.trashKeptDays) ? deps.trashKeptDays : 7
-    return entry.trashPath.startsWith(root + '/') || entry.trashPath.startsWith(root + '\\')
+    const inTrash = entry.trashPath.startsWith(root + '/') || entry.trashPath.startsWith(root + '\\')
+    if (!inTrash) return false
+
+    const normalized = entry.originalPath.replace(/\\/g, '/')
+    if (normalized.includes('..')) return false
+    const tail = normalized.split('/').filter(Boolean).pop()
+    // 双拼写下 bare 与 session- 两种写法指的是同一个会话，按 canonical 比。
+    if (canonicalSessionId(tail) !== canonicalSessionId(String(entry.id))) return false
+
+    return true
   }
 
   function cleanup(id) {
