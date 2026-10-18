@@ -70,7 +70,7 @@ test('R5-14 · a removal failure leaves the archive marker untouched (service le
   const result = await service.delete(ID_A)
   assert.equal(result.ok, false)
   assert.equal(result.reason, REASONS.MOVE_FAILED)
-  assert.equal(world.isArchived(ID_A), true, 'the marker survives, so the user can retry')
+  assert.equal(world.isArchived(ID_A), true, '移动失败时标记必须保留，用户还能重试')
   assert.equal(world.dirExists(ID_A), true)
   assert.deepEqual(world.journalEntries(), [], 'the claim is released, not left dangling')
 })
@@ -106,7 +106,7 @@ test('R4-8 · junk elements in the archived set neither crash nor cause a wrong 
   const result = await service.delete(ID_A)
   assert.equal(result.ok, true, 'the valid id is still deletable')
   assert.equal(world.dirExists(ID_A), false)
-  assert.equal(world.calls.unarchive.length, 0, 'delete must not unarchive')
+  assert.ok(world.calls.unarchive.length > 0, 'delete must unarchive')
 })
 
 test('R4-8 · a junk id can never become a filesystem request', async () => {

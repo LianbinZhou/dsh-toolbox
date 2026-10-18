@@ -182,10 +182,11 @@ export function createArchiveService(deps) {
   /** 删除后的账务清理：标记 + workspace 行 + projection cache，全部 await。 */
   async function cleanup(id, seat) {
     const failed = []
-    // 删除路径**不满掉归档标记**。clearArchiveMarkers 会 unarchive，会话就从
-    // 「归档」变回「未归档」——侧栏立刻把它列进未分组，而文件已经在回收箱里了：
-    // 用户看到的就是「回收箱有一份、侧栏又冒出来一份」（2026-10-18 真机现场）。
-    // 标记只由 purge（彻底删除）或 restore（恢复）来清。
+    // 删除路径也要清归档标记：否则归档集合一直指着一个已经不在 sessions 树里的会话，
+    // DSH 的其他归档消费者会探测失败。侧栏残留由 dropWorkspaceRows 负责（摘行），
+    // 两者配合才是「彻底消失」：标记清掉 + 行摘掉。
+    const markers = await clearArchiveMarkers(id)
+    failed.push(...markers.failed)
     if (typeof deps.dropWorkspaceRows === 'function') {
       try {
         const result = await deps.dropWorkspaceRows(id, seat)
