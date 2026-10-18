@@ -17,6 +17,9 @@ export const TOKEN_PATH = '/api/archive-manager/token'
 export const DELETE_PATH = '/api/archive-manager/delete'
 export const LIST_PATH = '/api/archive-manager/list'
 export const UNARCHIVE_PATH = '/api/archive-manager/unarchive'
+export const TRASH_PATH = '/api/archive-manager/trash'
+export const RESTORE_PATH = '/api/archive-manager/restore'
+export const PURGE_PATH = '/api/archive-manager/purge'
 export const CSRF_HEADER = 'x-dsh-toolbox'
 export const TOKEN_HEADER = 'x-dsh-toolbox-token'
 
@@ -236,6 +239,52 @@ export function createArchiveClient({ fetchImpl, base = () => '' } = {}) {
       } catch (error) {
         return {}
       }
+    },
+
+    /** GET 回收箱列表（只含白名单字段）。 */
+    async trash() {
+      if (disposed) return { ok: false, rows: [], reason: 'disposed' }
+      const result = await authorized(TRASH_PATH, { method: 'GET' })
+      if (result.response === undefined) return { ok: false, rows: [], reason: result.reason }
+      const body = await readJson(result.response)
+      if (!result.response.ok || body?.ok === false) {
+        return { ok: false, rows: [], reason: body?.reason ?? 'request-failed', protectedCount: body?.protectedCount, maxProtected: body?.maxProtected }
+      }
+      return {
+        ok: true,
+        rows: Array.isArray(body?.rows) ? body.rows : [],
+        protectedCount: body?.protectedCount,
+        maxProtected: body?.maxProtected,
+        keptDays: body?.keptDays,
+      }
+    },
+
+    /** POST 从回收箱恢复到原位。 */
+    async restoreFromTrash(sessionId) {
+      if (disposed) return { ok: false, status: 0, reason: 'disposed' }
+      const result = await authorized(RESTORE_PATH, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sessionId }),
+      })
+      if (result.response === undefined) return { ok: false, status: 0, reason: result.reason }
+      const body = await readJson(result.response)
+      if (!result.response.ok) return { ok: false, status: result.status, reason: body?.reason ?? 'request-failed' }
+      return { ok: true, status: result.status, warning: body?.warning }
+    },
+
+    /** POST 彻底删除（必须 confirm）。 */
+    async purge(sessionId) {
+      if (disposed) return { ok: false, status: 0, reason: 'disposed' }
+      const result = await authorized(PURGE_PATH, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sessionId, confirm: true }),
+      })
+      if (result.response === undefined) return { ok: false, status: 0, reason: result.reason }
+      const body = await readJson(result.response)
+      if (!result.response.ok) return { ok: false, status: result.status, reason: body?.reason ?? 'request-failed' }
+      return { ok: true, status: result.status }
     },
 
     /** Ask for a token without deleting anything (used on panel open). */

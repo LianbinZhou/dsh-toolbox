@@ -1704,6 +1704,9 @@
   var DELETE_PATH = "/api/archive-manager/delete";
   var LIST_PATH = "/api/archive-manager/list";
   var UNARCHIVE_PATH = "/api/archive-manager/unarchive";
+  var TRASH_PATH = "/api/archive-manager/trash";
+  var RESTORE_PATH = "/api/archive-manager/restore";
+  var PURGE_PATH = "/api/archive-manager/purge";
   var CSRF_HEADER = "x-dsh-toolbox";
   var TOKEN_HEADER = "x-dsh-toolbox-token";
   var MIN_TOKEN_LENGTH = 32;
@@ -1893,6 +1896,49 @@
           return {};
         }
       },
+      /** GET 回收箱列表（只含白名单字段）。 */
+      async trash() {
+        if (disposed) return { ok: false, rows: [], reason: "disposed" };
+        const result = await authorized(TRASH_PATH, { method: "GET" });
+        if (result.response === void 0) return { ok: false, rows: [], reason: result.reason };
+        const body = await readJson(result.response);
+        if (!result.response.ok || body?.ok === false) {
+          return { ok: false, rows: [], reason: body?.reason ?? "request-failed", protectedCount: body?.protectedCount, maxProtected: body?.maxProtected };
+        }
+        return {
+          ok: true,
+          rows: Array.isArray(body?.rows) ? body.rows : [],
+          protectedCount: body?.protectedCount,
+          maxProtected: body?.maxProtected,
+          keptDays: body?.keptDays
+        };
+      },
+      /** POST 从回收箱恢复到原位。 */
+      async restoreFromTrash(sessionId) {
+        if (disposed) return { ok: false, status: 0, reason: "disposed" };
+        const result = await authorized(RESTORE_PATH, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ sessionId })
+        });
+        if (result.response === void 0) return { ok: false, status: 0, reason: result.reason };
+        const body = await readJson(result.response);
+        if (!result.response.ok) return { ok: false, status: result.status, reason: body?.reason ?? "request-failed" };
+        return { ok: true, status: result.status, warning: body?.warning };
+      },
+      /** POST 彻底删除（必须 confirm）。 */
+      async purge(sessionId) {
+        if (disposed) return { ok: false, status: 0, reason: "disposed" };
+        const result = await authorized(PURGE_PATH, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ sessionId, confirm: true })
+        });
+        if (result.response === void 0) return { ok: false, status: 0, reason: result.reason };
+        const body = await readJson(result.response);
+        if (!result.response.ok) return { ok: false, status: result.status, reason: body?.reason ?? "request-failed" };
+        return { ok: true, status: result.status };
+      },
       /** Ask for a token without deleting anything (used on panel open). */
       refresh,
       /** Diagnostics only: the token never leaves this module otherwise. */
@@ -1974,6 +2020,10 @@
     let rows = [];
     let titles = {};
     let pending = null;
+    let viewMode = "archive";
+    let trashRows = [];
+    let trashMeta = {};
+    let purgePending = null;
     let state = "idle";
     let message = "";
     const enabled = () => {
@@ -2019,6 +2069,68 @@
     }
     return {
       refresh,
+      /** 切换页签。回收箱不新增入口，只在这里切。 */
+      switchTo(mode) {
+        viewMode = mode === "trash" ? "trash" : "archive";
+        purgePending = null;
+        message = "";
+        return viewMode;
+      },
+      /** 加载回收箱列表。开关关闭时不发请求。 */
+      async refreshTrash() {
+        if (!enabled()) {
+          viewMode = "trash";
+          state = "disabled";
+          message = "归档 HTTP 接口未启用";
+          trashRows = [];
+          return { ok: false, reason: "disabled" };
+        }
+        viewMode = "trash";
+        const result = await client.trash();
+        if (result.ok) {
+          trashRows = result.rows;
+          trashMeta = { protectedCount: result.protectedCount, maxProtected: result.maxProtected, keptDays: result.keptDays };
+          state = "ready";
+          message = "";
+          return { ok: true };
+        }
+        state = "error";
+        message = phrase(result.reason);
+        return { ok: false, reason: result.reason };
+      },
+      /** 从回收箱恢复。 */
+      async restoreTrash(id) {
+        if (!enabled()) return { ok: false, reason: "disabled" };
+        const result = await client.restoreFromTrash(id);
+        if (!result.ok) {
+          message = phrase(result.reason);
+          return result;
+        }
+        message = result.warning === "cleanup-pending" ? phrase("cleanup-pending") : "";
+        await this.refreshTrash();
+        return result;
+      },
+      /** 彻底删除：先问，再执行。 */
+      askPurge(id) {
+        purgePending = id;
+        message = "";
+      },
+      cancelPurge() {
+        purgePending = null;
+      },
+      async confirmPurge() {
+        const id = purgePending;
+        purgePending = null;
+        if (id === null) return { ok: false, reason: "nothing-to-purge" };
+        const result = await client.purge(id);
+        if (!result.ok) {
+          message = phrase(result.reason);
+          return result;
+        }
+        message = "";
+        await this.refreshTrash();
+        return result;
+      },
       /** 点「删除」：只提问，不动数据。 */
       askRemove(id) {
         pending = id;
@@ -2051,7 +2163,21 @@
             })
           ),
           canDelete: enabled(),
-          pending
+          pending,
+          view: viewMode,
+          trash: viewMode === "trash" ? {
+            rows: trashRows.map((row) => ({
+              id: row.id,
+              label: titles[row.id] || "会话 " + String(row.id).slice(-8),
+              phase: row.phase,
+              at: row.at,
+              keptDays: row.keptDays
+            })),
+            protectedCount: trashMeta.protectedCount,
+            maxProtected: trashMeta.maxProtected,
+            keptDays: trashMeta.keptDays
+          } : null,
+          purgePending
         });
       },
       dispose() {

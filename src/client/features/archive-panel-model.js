@@ -53,6 +53,11 @@ export function createArchivePanel({ client, isEnabled }) {
   let titles = {}
   /** 待确认删除的会话；点「删除」先落到这里，再点「入回收箱」才真执行。 */
   let pending = null
+  /** 当前页签：归档 / 回收箱。不新增侧栏入口，只在面板内切换。 */
+  let viewMode = 'archive'
+  let trashRows = []
+  let trashMeta = {}
+  let purgePending = null
   let state = 'idle' // idle | disabled | loading | ready | error
   let message = ''
 
@@ -104,6 +109,72 @@ export function createArchivePanel({ client, isEnabled }) {
 
   return {
     refresh,
+    /** 切换页签。回收箱不新增入口，只在这里切。 */
+    switchTo(mode) {
+      viewMode = mode === 'trash' ? 'trash' : 'archive'
+      purgePending = null
+      message = ''
+      return viewMode
+    },
+
+    /** 加载回收箱列表。开关关闭时不发请求。 */
+    async refreshTrash() {
+      if (!enabled()) {
+        viewMode = 'trash'
+        state = 'disabled'
+        message = '归档 HTTP 接口未启用'
+        trashRows = []
+        return { ok: false, reason: 'disabled' }
+      }
+      viewMode = 'trash'
+      const result = await client.trash()
+      if (result.ok) {
+        trashRows = result.rows
+        trashMeta = { protectedCount: result.protectedCount, maxProtected: result.maxProtected, keptDays: result.keptDays }
+        state = 'ready'
+        message = ''
+        return { ok: true }
+      }
+      state = 'error'
+      message = phrase(result.reason)
+      return { ok: false, reason: result.reason }
+    },
+
+    /** 从回收箱恢复。 */
+    async restoreTrash(id) {
+      if (!enabled()) return { ok: false, reason: 'disabled' }
+      const result = await client.restoreFromTrash(id)
+      if (!result.ok) {
+        message = phrase(result.reason)
+        return result
+      }
+      message = result.warning === 'cleanup-pending' ? phrase('cleanup-pending') : ''
+      await this.refreshTrash()
+      return result
+    },
+
+    /** 彻底删除：先问，再执行。 */
+    askPurge(id) {
+      purgePending = id
+      message = ''
+    },
+    cancelPurge() {
+      purgePending = null
+    },
+    async confirmPurge() {
+      const id = purgePending
+      purgePending = null
+      if (id === null) return { ok: false, reason: 'nothing-to-purge' }
+      const result = await client.purge(id)
+      if (!result.ok) {
+        message = phrase(result.reason)
+        return result
+      }
+      message = ''
+      await this.refreshTrash()
+      return result
+    },
+
     /** 点「删除」：只提问，不动数据。 */
     askRemove(id) {
       pending = id
@@ -137,6 +208,22 @@ export function createArchivePanel({ client, isEnabled }) {
         ),
         canDelete: enabled(),
         pending,
+        view: viewMode,
+        trash: viewMode === 'trash'
+          ? {
+              rows: trashRows.map((row) => ({
+                id: row.id,
+                label: titles[row.id] || '会话 ' + String(row.id).slice(-8),
+                phase: row.phase,
+                at: row.at,
+                keptDays: row.keptDays,
+              })),
+              protectedCount: trashMeta.protectedCount,
+              maxProtected: trashMeta.maxProtected,
+              keptDays: trashMeta.keptDays,
+            }
+          : null,
+        purgePending,
       })
     },
     dispose() {
