@@ -88,6 +88,9 @@ export function createArchiveApi(options) {
     deps,
     api: {
       list: () => service.list(),
+      trash: () => service.listTrash(),
+      restore: (id) => service.restore(id),
+      purge: (id) => service.purge(id),
       debug: () => (typeof deps.shape === 'function' ? deps.shape() : { reason: 'no shape()' }),
       unarchive: async (id) => {
         const result = await service.unarchiveSession(id)

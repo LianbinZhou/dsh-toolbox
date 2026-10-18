@@ -18,7 +18,7 @@
 
 import { TOKEN_PATH, createTokenEndpoint } from './token-route.js'
 import { DELETE_PATH, createRouteGuard, registerArchiveRoutes } from './route-guard.js'
-import { LIST_PATH, UNARCHIVE_PATH, createApiHandlers } from './api-routes.js'
+import { LIST_PATH, PURGE_PATH, RESTORE_PATH, TRASH_PATH, UNARCHIVE_PATH, createApiHandlers } from './api-routes.js'
 
 /**
  * @param {object} options
@@ -77,6 +77,14 @@ export function mountArchiveRoutes({ webServer, token, origins, onDelete, regist
       if (typeof listDisposer === 'function') disposers.push(listDisposer)
       const unarchiveDisposer = webServer.register({ kind: 'exact', method: 'POST', path: UNARCHIVE_PATH, handler: handlers.unarchive })
       if (typeof unarchiveDisposer === 'function') disposers.push(unarchiveDisposer)
+
+      // 回收箱：查看 / 恢复到原位 / 彻底清空（清空要显式 confirm）。
+      const trashDisposer = webServer.register({ kind: 'exact', method: 'GET', path: TRASH_PATH, handler: handlers.trash })
+      if (typeof trashDisposer === 'function') disposers.push(trashDisposer)
+      const restoreDisposer = webServer.register({ kind: 'exact', method: 'POST', path: RESTORE_PATH, handler: handlers.restore })
+      if (typeof restoreDisposer === 'function') disposers.push(restoreDisposer)
+      const purgeDisposer = webServer.register({ kind: 'exact', method: 'POST', path: PURGE_PATH, handler: handlers.purge })
+      if (typeof purgeDisposer === 'function') disposers.push(purgeDisposer)
     }
   } catch (error) {
     // Composite rollback: a half-mounted pair is worse than nothing mounted.
@@ -103,7 +111,7 @@ export function mountArchiveRoutes({ webServer, token, origins, onDelete, regist
     }
   }
 
-  const routes = [TOKEN_PATH, DELETE_PATH, LIST_PATH, UNARCHIVE_PATH]
+  const routes = [TOKEN_PATH, DELETE_PATH, LIST_PATH, UNARCHIVE_PATH, TRASH_PATH, RESTORE_PATH, PURGE_PATH]
   console.info('[dsh-toolbox] archive routes registered: ' + routes.join(', ') + (api ? '' : ' (no session adapter: list/unarchive answer 503)'))
   return { registered: true, dispose, routes }
 }

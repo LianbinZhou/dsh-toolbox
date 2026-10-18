@@ -415,6 +415,26 @@ export function createArchiveService(deps) {
   }
 
   return {
+      /**
+       * 回收箱视图：只给「能安全展示」的字段。
+       *
+       * 绝不返回 trashPath / originalPath / nonce —— 那是内部布局信息。
+       */
+      listTrash() {
+        const rows = []
+        const ttl = Number.isFinite(deps.trashKeptDays) ? deps.trashKeptDays : 7
+        for (const entry of deps.journal.read()) {
+          if (!entry || (entry.phase !== 'cleaned' && entry.phase !== 'trashed')) continue
+          rows.push({
+            id: String(entry.id),
+            phase: entry.phase,
+            keptDays: ttl,
+            at: typeof entry.at === 'number' ? entry.at : 0,
+          })
+        }
+        return { ok: true, rows, protectedCount: rows.length, keptDays: ttl }
+      },
+
     delete: deleteSession,
     purge,
     heal,

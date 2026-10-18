@@ -13,6 +13,9 @@
 import { CSRF_HEADER, CSRF_VALUE, MAX_BODY_BYTES, TOKEN_HEADER } from './route-guard.js'
 
 export const LIST_PATH = '/api/archive-manager/list'
+export const TRASH_PATH = '/api/archive-manager/trash'
+export const RESTORE_PATH = '/api/archive-manager/restore'
+export const PURGE_PATH = '/api/archive-manager/purge'
 export const UNARCHIVE_PATH = '/api/archive-manager/unarchive'
 
 function respond(res, status, body) {
@@ -80,6 +83,35 @@ export function createApiHandlers({ guard, peerOf, api }) {
     return true
   }
 
+  /** 回收箱相关的三条：查看、恢复、彻底清空。 */
+  function trashCommon(req, res, run) {
+    if (!authorize(req, res)) return
+    Promise.resolve()
+      .then(run)
+      .then((result) => {
+        const value = result && typeof result === 'object' ? result : {}
+        const ok = value.ok !== false
+        // 只回白名单字段：绝不带 trashPath / originalPath / nonce。
+        const body = { ok }
+        if (Array.isArray(value.rows)) {
+          body.rows = value.rows.map((row) => ({
+            id: row.id,
+            phase: row.phase,
+            keptDays: row.keptDays,
+            at: row.at,
+          }))
+        }
+        if (typeof value.protectedCount === 'number') body.protectedCount = value.protectedCount
+        if (typeof value.keptDays === 'number') body.keptDays = value.keptDays
+        if (!ok) body.reason = typeof value.reason === 'string' ? value.reason : 'request-failed'
+        respond(res, ok ? 200 : 409, body)
+      })
+      .catch((error) => {
+        console.error('[dsh-toolbox] 回收箱操作失败', error)
+        respond(res, 500, { ok: false, reason: 'request-failed' })
+      })
+  }
+
   return {
     /** GET: the archived rows the panel shows. */
     list(req, res) {
@@ -100,6 +132,38 @@ export function createApiHandlers({ guard, peerOf, api }) {
           console.error('[dsh-toolbox] archive list failed', error)
           respond(res, 500, { ok: false, error: 'list failed' })
         })
+    },
+
+    /** GET：回收箱列表（不含路径与 nonce）。 */
+    trash(req, res) {
+      if (String(req.method || '').toUpperCase() !== 'GET') {
+        respond(res, 405, { ok: false, error: 'method not allowed' })
+        req.resume()
+        return
+      }
+      trashCommon(req, res, () => api.trash())
+    },
+
+    /** POST：把垃圾桶里的会话放回原位。 */
+    restore(req, res) {
+      if (!authorize(req, res)) return
+      readJsonBody(req, res, (parsed) => {
+        const id = typeof parsed.sessionId === 'string' ? parsed.sessionId : ''
+        trashCommon(req, res, () => api.restore(id))
+      })
+    },
+
+    /** POST：彻底清空一条（必须显式 confirm）。 */
+    purge(req, res) {
+      if (!authorize(req, res)) return
+      readJsonBody(req, res, (parsed) => {
+        if (parsed.confirm !== true) {
+          respond(res, 400, { ok: false, error: 'confirm required', reason: 'confirm-required' })
+          return
+        }
+        const id = typeof parsed.sessionId === 'string' ? parsed.sessionId : ''
+        trashCommon(req, res, () => api.purge(id))
+      })
     },
 
     /** POST: undo the archive flag for one id. */
