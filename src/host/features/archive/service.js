@@ -368,25 +368,34 @@ export function createArchiveService(deps) {
     return { ok: true, healed, pending }
   }
 
+  /**
+   * 把垃圾箱里的文件放回原位。**调用者必须已经持有该 id 的锁。**
+   *
+   * 这条注释是 P0 修复的一部分：withLock 不可重入，锁内再调带锁的 restore
+   * 会等自己、永久挂起。所有内部调用都必须走这个无锁版本。
+   */
+  async function restoreLocked(id) {
+    const entry = findEntry(deps.journal, id)
+    if (!entry || entry.phase === 'done') {
+      return { ok: false, status: 404, reason: REASONS.NOT_ARCHIVED }
+    }
+    if (!entryIsSane(entry)) return { ok: false, status: 409, reason: 'journal-corrupt' }
+    if (entry.phase !== 'trashed' && entry.phase !== 'cleaned') {
+      return { ok: false, status: 409, reason: REASONS.IN_PROGRESS }
+    }
+    try {
+      deps.renamePath(entry.trashPath, entry.originalPath)
+    } catch (error) {
+      return { ok: false, status: 500, reason: REASONS.RESTORE_FAILED }
+    }
+    deps.journal.update((entries) => entries.filter((entry) => entry.id !== id))
+    return { ok: true, restored: true }
+  }
+
+  /** 对外入口：校验 id、拿锁、复用无锁实现。 */
   async function restore(id) {
     if (!isSafeSessionId(id)) return { ok: false, status: 400, reason: REASONS.INVALID_ID }
-    return withLock(id, async () => {
-      const entry = findEntry(deps.journal, id)
-      if (!entry || entry.phase === 'done') {
-        return { ok: false, status: 404, reason: REASONS.NOT_ARCHIVED }
-      }
-      if (!entryIsSane(entry)) return { ok: false, status: 409, reason: 'journal-corrupt' }
-      if (entry.phase !== 'trashed' && entry.phase !== 'cleaned') {
-        return { ok: false, status: 409, reason: REASONS.IN_PROGRESS }
-      }
-      try {
-        deps.renamePath(entry.trashPath, entry.originalPath)
-      } catch (error) {
-        return { ok: false, status: 500, reason: REASONS.RESTORE_FAILED }
-      }
-      deps.journal.update((entries) => entries.filter((entry) => entry.id !== id))
-      return { ok: true, restored: true }
-    })
+    return withLock(id, () => restoreLocked(id))
   }
 
   return {
@@ -424,8 +433,12 @@ export function createArchiveService(deps) {
         // Unarchiving a trashed session means "put my files back" (T8).
         const entry = findEntry(deps.journal, id)
         if (entry && (entry.phase === 'trashed' || entry.phase === 'cleaned')) {
-          const moved = await restore(id)
+          const moved = await restoreLocked(id)
           if (!moved.ok) return moved
+
+          // 文件已经从垃圾箱放回原位，这就完成了；删除时归档标记早已清掉，
+          // 再往下检查归档集合只会把它误判成 404。
+          return { ok: true, restored: true }
         }
         if (!deps.readArchived().includes(id)) {
           return { ok: false, status: 404, reason: REASONS.NOT_ARCHIVED }
