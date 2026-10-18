@@ -185,17 +185,41 @@ export function createArchiveService(deps) {
     const markers = await clearArchiveMarkers(id)
     failed.push(...markers.failed)
 
-    try {
-      if (typeof deps.dropWorkspaceRows === 'function') await deps.dropWorkspaceRows(id, seat)
-    } catch (error) {
-      failed.push('workspace')
+    if (typeof deps.dropWorkspaceRows === 'function') {
+      try {
+        const result = await deps.dropWorkspaceRows(id, seat)
+        // 三种都算没做完（终审 P0-1）：
+        //   ok === false     —— 没定位到工作区 / 没摘掉 / detach 无效果
+        //   dropped === 0    —— 一个都没删，且拿不出「本来就干净」的证据
+        // 返回非对象（老实现无返回值）：无法判断，不判失败，免得把兼容层判成崩溃。
+        const why =
+          result && typeof result === 'object'
+            ? result.ok === false
+              ? String(result.reason ?? 'unknown')
+              : result.dropped === 0 && result.already !== true
+                ? 'dropped-0'
+                : null
+            : null
+        if (why !== null) {
+          failed.push('workspace:' + why)
+          console.error('[dsh-toolbox] cleanup workspace 未摘除 id=' + id + ' seat=' + JSON.stringify(seat ?? null) + ' reason=' + why)
+        }
+      } catch (error) {
+        const detail = String((error && error.message) || error).slice(0, 200)
+        failed.push('workspace-threw:' + detail)
+        console.error('[dsh-toolbox] cleanup workspace 抛错 id=' + id + ' seat=' + JSON.stringify(seat ?? null), error)
+      }
     }
-    try {
-      if (typeof deps.scrubCache === 'function') await deps.scrubCache(id)
-    } catch (error) {
-      failed.push('cache')
+    if (typeof deps.scrubCache === 'function') {
+      try {
+        await deps.scrubCache(id)
+      } catch (error) {
+        const detail = String((error && error.message) || error).slice(0, 200)
+        failed.push('cache-threw:' + detail)
+        console.error('[dsh-toolbox] cleanup cache 抛错 id=' + id, error)
+      }
     }
-    if (failed.length > 0) console.warn('[dsh-toolbox] cleanup 未完成: ' + failed.join(', '))
+    if (failed.length > 0) console.warn('[dsh-toolbox] cleanup 未完成 id=' + id + ': ' + failed.join(', '))
     return failed
   }
 
@@ -225,10 +249,24 @@ export function createArchiveService(deps) {
 
     const failed = await cleanup(id, entry && entry.workspaceSeat)
     if (failed.length > 0) {
-      return { ok: true, removedDir: true, reason: 'cleanup-pending', warning: 'deleted with warnings' }
+      // 清理没做完就**不许**标 cleaned：cleaned 的语义是「账已平」，标错了 heal
+      // 会在每次启动时重跑同一条必然失败的清理，终端就成了复读机。
+      const attempts = Number(entry.cleanupAttempts ?? 0) + 1
+      const detail = failed.join(',').slice(0, 300)
+      deps.journal.update((entries) => entries.map((current) =>
+        current.id === id
+          ? { ...current, phase: 'trashed', lastError: detail, cleanupAttempts: attempts, cleanupAt: Date.now() }
+          : current,
+      ))
+      console.warn('[dsh-toolbox] cleanup 未完成（第 ' + attempts + ' 次），phase 保持 trashed：' + id + ' → ' + detail)
+      return { ok: true, removedDir: true, reason: 'cleanup-pending', warning: 'deleted with warnings', detail }
     }
 
-    deps.journal.update((entries) => entries.map((current) => (current.id === id ? { ...current, phase: 'cleaned' } : current)))
+    deps.journal.update((entries) => entries.map((current) =>
+      current.id === id
+        ? { ...current, phase: 'cleaned', lastError: undefined, cleanupAttempts: 0 }
+        : current,
+    ))
 
     // 删除到此为止：目录已在垃圾箱里等保留期，绝不在这里物理清空；
     // 以前这里紧接着物理删除，一次误点就永久没了。
@@ -415,12 +453,20 @@ export function createArchiveService(deps) {
     })
   }
 
+  const MAX_CLEANUP_ATTEMPTS = 3
+
   /** Retry every unfinished entry. Locked per id, like delete (D3). */
   async function heal() {
     const healed = []
     const pending = []
     for (const entry of deps.journal.read()) {
       if (entry.phase === 'done') continue
+      // 连续失败到上限就不再自动重试：每次启动重跑同一条必然失败的清理只会把
+      // 终端刷成复读机，状态还停在原地。用户手动「彻底删除」仍会再试一次。
+      if (entry.lastError && Number(entry.cleanupAttempts ?? 0) >= MAX_CLEANUP_ATTEMPTS) {
+        pending.push(entry.id)
+        continue
+      }
       if (entry.phase === 'deleting') {
         // Two different crashes wear the same journal state:
         //   (a) the claim was written but the directory never moved  -> drop it
@@ -514,6 +560,12 @@ export function createArchiveService(deps) {
             at: typeof entry.at === 'number' ? entry.at : 0,
             // 剩余天数必须按到期时间算：keptDays 是总期，不是剩余。
             expiresAt: typeof entry.at === 'number' ? entry.at + ttl * 24 * 60 * 60 * 1000 : 0,
+            // 清理没做完的原因必须送到 UI：否则用户只看到条目躺在回收箱里，
+            // 永远不知道为什么侧栏还留着它（终审 D5 的可见性要求）。
+            ...(typeof entry.lastError === 'string' && entry.lastError !== ''
+              ? { lastError: entry.lastError.slice(0, 200) }
+              : {}),
+            ...(Number.isFinite(entry.cleanupAttempts) ? { cleanupAttempts: entry.cleanupAttempts } : {}),
           })
         }
         const maxProtected = Number.isFinite(deps.maxProtected) ? deps.maxProtected : 200
@@ -569,8 +621,14 @@ export function createArchiveService(deps) {
         if (!deps.readArchived().includes(id)) {
           return { ok: false, status: 404, reason: REASONS.NOT_ARCHIVED }
         }
-        deps.unarchive(id)
-        return { ok: true }
+        // 官方 unarchiveSession 是 async：不 await 就会出现「接口已返回 ok、
+        // 归档标记还在」的短暂不一致（终审 P1-2）。复用 clearArchiveMarkers：
+        // 它遍历 bare / session- 双拼写并逐个 await。
+        const cleared = await clearArchiveMarkers(id)
+        if (cleared.failed.length > 0) {
+          return { ok: true, restored: true, warning: 'cleanup-pending', detail: cleared.failed.join(',') }
+        }
+        return { ok: true, restored: true }
       })
     },
   }

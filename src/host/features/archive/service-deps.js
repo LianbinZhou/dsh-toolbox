@@ -73,7 +73,9 @@ export function createServiceDeps({ home, adapter, maxProtected = 200, ttlDays =
     isLive: (id) => adapter.isLive(id) === true,
     probe: (id) => adapter.probe(id),
     unarchive: (id) => adapter.unarchive(id),
-    dropWorkspaceRows: (id) => adapter.dropWorkspaceRows?.(id),
+    // seat 必须转发：删除前记下的工作区快照是移走目录后唯一可靠的身份，
+    // 少了它 adapter 只能回去读 filtered getter（目录没了就找不到、甚至抛）。
+    dropWorkspaceRows: (id, seat) => adapter.dropWorkspaceRows?.(id, seat),
     scrubCache: (id) => adapter.scrubCache?.(id),
     snapshotWorkspace: (id) => adapter.snapshotWorkspace?.(id),
     reattach: (snapshot) => adapter.reattach?.(snapshot),

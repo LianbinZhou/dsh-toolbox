@@ -262,7 +262,10 @@ export function createDeleteHandler({ guard, onDelete, peerOf }) {
           else if (value.warning !== undefined) body.warning = 'deleted with warnings'
           respond(res, ok ? 200 : 409, body)
         })
-        .catch(() => {
+        .catch((error) => {
+          // 脱敏响应是给前端的，日志里必须留完整堆栈：上一版这里连 error 都不接，
+          // 于是前端只看到 "delete failed"，终端一片安静，等于把崩溃现场抹掉了。
+          console.error('[dsh-toolbox] delete 路由层崩溃（响应已脱敏）', error)
           respond(res, 500, { ok: false, error: 'delete failed' })
         })
     })

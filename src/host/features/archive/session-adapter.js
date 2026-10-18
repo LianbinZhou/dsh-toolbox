@@ -19,7 +19,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
-import { dshHome, sessionsRootFor } from './paths.js'
+import { canonicalSessionId, dshHome, sessionsRootFor } from './paths.js'
 import { createFsProbe } from './probe.js'
 
 /**
@@ -192,43 +192,101 @@ export function createSessionAdapter({ registry, sessions, sessionsRoot, storage
     async dropWorkspaceRows(id, seat) {
       if (!hasRegistry || typeof registry.list !== 'function') return { ok: false, reason: 'no-registry' }
       const drop = canonicalSessionId(String(id))
-      // 有快照就按快照直取：移动之后 entity.sessionIds 是 filtered getter，
-      // 目录不在了它可能根本不返回这一行，靠它找永远找不到。
+      // 快照优先：移动之后 entity.sessionIds 是 filtered getter，目录不在了它既可能
+      // 返回空、也可能直接抛；seat 是删除前记下的，永远有效。
       const targetWorkspace = seat && seat.workspaceId ? String(seat.workspaceId) : null
       let entities
       try {
         entities = registry.list()
       } catch (error) {
+        console.error('[dsh-toolbox] dropWorkspaceRows: registry.list() 失败 id=' + id, error)
         return { ok: false, reason: 'list-failed' }
       }
-      let dropped = 0
-      // dropWorkspaceRows 诊断：一次重启就能看清它为什么没摘掉行。
-      console.info('[dsh-toolbox] dropWorkspaceRows: entities=' + (Array.isArray(entities) ? entities.length : typeof entities))
-      for (const entity of entities ?? []) {
-        if (!entity || typeof entity.mutate !== 'function') continue
-        if (targetWorkspace !== null && String(entity.id ?? entity.workspaceId ?? '') !== targetWorkspace) continue
-        // entity.sessionIds 是 filtered getter（目录不在就藏行）；
-        // entity.record.sessionIds 是原始记录，旧记录靠它兜底。
-        const ids = Array.isArray(entity.record?.sessionIds)
-          ? entity.record.sessionIds
-          : Array.isArray(entity.sessionIds)
-            ? entity.sessionIds
-            : []
-        // 快照命中就直接算匹配，不再依赖 filtered getter。
-        const matched = targetWorkspace !== null || ids.some((value) => canonicalSessionId(String(value)) === drop)
-        console.info('[dsh-toolbox] dropWorkspaceRows: entity=' + String(entity.id ?? entity.workspaceId ?? '?') + ' rows=' + ids.length + ' matched=' + matched + ' mutatable=' + (typeof entity.mutate === 'function'))
-        if (!matched) continue
+
+      /** 读取某个工作区当前的成员：原始记录优先，filtered getter 兜底且可能抛。 */
+      const readIds = (entity) => {
+        if (Array.isArray(entity.record?.sessionIds)) return entity.record.sessionIds
         try {
-          await entity.mutate((record) => ({
-            ...record,
-            sessionIds: (record.sessionIds ?? []).filter((value) => canonicalSessionId(String(value)) !== drop),
-          }))
-          dropped += 1
+          return Array.isArray(entity.sessionIds) ? entity.sessionIds : []
         } catch (error) {
-          /* 行是展示层：存储已经没了，这里失败不该让删除回滚 */
+          return []
         }
       }
-      return { ok: true, dropped }
+
+      let dropped = 0
+      let already = false
+      console.info(
+        '[dsh-toolbox] dropWorkspaceRows: entities=' +
+          (Array.isArray(entities) ? entities.length : typeof entities) +
+          ' target=' + (targetWorkspace === null ? '(by id)' : targetWorkspace),
+      )
+
+      for (const entity of entities ?? []) {
+        // 官方写路径是 detachSession（mutate 是 private）。不能再拿 mutate 当入场券：
+        // 那样会把「有公开方法、没有私有方法」的实体整个跳过，等于什么都没做。
+        if (!entity) continue
+        if (typeof entity.detachSession !== 'function' && typeof entity.mutate !== 'function') continue
+        const entityKey = String(entity.id ?? entity.workspaceId ?? '')
+        if (targetWorkspace !== null && entityKey !== targetWorkspace) continue
+        const ids = readIds(entity)
+        const matched = targetWorkspace !== null || ids.some((row) => canonicalSessionId(String(row)) === drop)
+        if (!matched) continue
+
+        // P0-2：一律用快照里记下的**真实拼写**。直接用请求 id 会踩 bare / session-
+        // 前缀不一致：detachSession 是精确匹配，幂等返回、一行没删，却报 dropped=1。
+        const realId =
+          seat && seat.sessionId ? String(seat.sessionId) : ids.find((row) => canonicalSessionId(String(row)) === drop)
+        if (realId === undefined) {
+          // 匹配到工作区、但这一行本来就不在：这是「已经干净」，不算失败。
+          already = true
+          continue
+        }
+
+        const before = ids.length
+        try {
+          await entity.detachSession(String(realId))
+        } catch (error) {
+          console.error('[dsh-toolbox] detachSession 失败，退回写记录 entity=' + entityKey + ' id=' + realId, error)
+          try {
+            await entity.mutate((record) => ({
+              ...record,
+              sessionIds: (record.sessionIds ?? []).filter((row) => canonicalSessionId(String(row)) !== drop),
+            }))
+          } catch (inner) {
+            console.error('[dsh-toolbox] dropWorkspaceRows: 写记录也失败 entity=' + entityKey + ' id=' + realId, inner)
+            return { ok: false, reason: 'detach-failed' }
+          }
+        }
+
+        // P0-2 的核对：不再拿「方法没抛」当成功，重新 list 一遍看它到底走没走。
+        let after = []
+        try {
+          const fresh = registry.list()
+          const freshEntity = (fresh ?? []).find((one) => String(one.id ?? one.workspaceId ?? '') === entityKey)
+          after = freshEntity ? readIds(freshEntity) : []
+        } catch (error) {
+          after = []
+        }
+        if (after.some((row) => canonicalSessionId(String(row)) === drop)) {
+          console.error(
+            '[dsh-toolbox] dropWorkspaceRows: detach 之后仍在 entity=' + entityKey + ' id=' + realId +
+              ' before=' + before + ' after=' + after.length,
+          )
+          return { ok: false, reason: 'detach-no-effect' }
+        }
+        dropped += 1
+        console.info('[dsh-toolbox] detachSession ok entity=' + entityKey + ' id=' + realId + ' (' + before + '→' + after.length + ')')
+      }
+
+      if (dropped === 0 && !already) {
+        // 有 seat 却一行没摘，或压根没定位到：这就是「报成功但没删」的老毛病，必须失败。
+        console.error(
+          '[dsh-toolbox] dropWorkspaceRows: 没摘到任何行 id=' + id + ' target=' + (targetWorkspace ?? '(by id)'),
+        )
+        return { ok: false, reason: targetWorkspace === null ? 'not-found' : 'workspace-row-missing' }
+      }
+      console.info('[dsh-toolbox] dropWorkspaceRows: id=' + id + ' dropped=' + dropped + ' already=' + already)
+      return { ok: true, dropped, already }
     },
 
     /**
@@ -285,16 +343,28 @@ export function createSessionAdapter({ registry, sessions, sessionsRoot, storage
       try {
         entities = registry.list()
       } catch (error) {
+        console.error('[dsh-toolbox] snapshotWorkspace: registry.list() 失败 id=' + id, error)
         return null
       }
       for (const entity of entities ?? []) {
-        if (!entity || !Array.isArray(entity.sessionIds)) continue
-        const index = entity.sessionIds.findIndex((value) => canonicalSessionId(String(value)) === target)
+        // 归档会话的目录已经不在原位，entity.sessionIds 这个 filtered getter 在
+        // 访问时可能直接抛——而这一步发生在删除之前，一抛整个 delete 就 500。
+        // 原始记录优先，getter 只作兜底且包起来。
+        let ids = Array.isArray(entity.record?.sessionIds) ? entity.record.sessionIds : null
+        if (ids === null) {
+          try {
+            ids = Array.isArray(entity.sessionIds) ? entity.sessionIds : []
+          } catch (error) {
+            console.error('[dsh-toolbox] snapshotWorkspace: 读取 sessionIds 抛错 id=' + id, error)
+            ids = []
+          }
+        }
+        const index = ids.findIndex((value) => canonicalSessionId(String(value)) === target)
         if (index < 0) continue
         return {
           workspaceId: String(entity.id ?? entity.workspaceId ?? ''),
-          sessionId: String(entity.sessionIds[index]),
-          beforeSessionId: index + 1 < entity.sessionIds.length ? String(entity.sessionIds[index + 1]) : null,
+          sessionId: String(ids[index]),
+          beforeSessionId: index + 1 < ids.length ? String(ids[index + 1]) : null,
         }
       }
       return null
@@ -310,29 +380,71 @@ export function createSessionAdapter({ registry, sessions, sessionsRoot, storage
       try {
         entities = registry.list()
       } catch (error) {
+        console.error('[dsh-toolbox] reattach: registry.list() 失败', error)
         return { ok: false, reason: 'list-failed' }
       }
       for (const entity of entities ?? []) {
-        if (!entity || typeof entity.mutate !== 'function') continue
+        if (!entity) continue
+        const canInsert = typeof entity.insertSessionBefore === 'function'
+        const canAttach = typeof entity.attachSession === 'function'
+        const canMutate = typeof entity.mutate === 'function'
+        if (!canInsert && !canAttach && !canMutate) continue
         if (String(entity.id ?? entity.workspaceId ?? '') !== snapshot.workspaceId) continue
-        try {
-          await entity.mutate((record) => {
-            const ids = Array.isArray(record.sessionIds) ? record.sessionIds.slice() : []
-            if (ids.some((value) => canonicalSessionId(String(value)) === target)) return record
-            const anchor = snapshot.beforeSessionId
-              ? ids.findIndex((value) => canonicalSessionId(String(value)) === canonicalSessionId(String(snapshot.beforeSessionId)))
-              : -1
-            if (anchor >= 0) ids.splice(anchor, 0, snapshot.sessionId)
-            else ids.push(snapshot.sessionId)
-            return { ...record, sessionIds: ids }
-          })
-          return { ok: true }
-        } catch (error) {
-          return { ok: false, reason: 'mutate-failed' }
+
+        // 顺序必须是「先挂载、再定位」。insertSessionBefore 要求会话已经在 record
+        // 里，而删除时已经 detach 过 —— 先 insert 必然报 not accounted，最后只能
+        // 落到追加，会话就永远回不到原位（终审 P1-1 实测到的就是这个）。
+        const before = snapshot.beforeSessionId ? String(snapshot.beforeSessionId) : null
+        const sessionId = String(snapshot.sessionId)
+
+        if (canAttach) {
+          try {
+            await entity.attachSession(sessionId)
+          } catch (error) {
+            console.error('[dsh-toolbox] reattach: attachSession 失败，退回写记录', error)
+            return fallbackMutate(entity, before, sessionId, target)
+          }
+          // 挂上了，再调位置；调不动也已经挂回去了，位置只是次优。
+          if (canInsert && before !== null) {
+            try {
+              await entity.insertSessionBefore(sessionId, before)
+              return { ok: true, mode: 'attach+insertBefore' }
+            } catch (error) {
+              console.error('[dsh-toolbox] reattach: 已挂载但调整位置失败（保留追加位置）', error)
+            }
+          }
+          return { ok: true, mode: 'attach' }
         }
+
+        return fallbackMutate(entity, before, sessionId, target)
       }
       return { ok: false, reason: 'workspace-not-found' }
     },
+  }
+}
+
+/** 没有 attachSession 的老实现：直接改记录，按 before 插入或追加。 */
+function fallbackMutate(entity, before, sessionId, target) {
+  try {
+    return entity
+      .mutate((record) => {
+        const ids = Array.isArray(record.sessionIds) ? record.sessionIds.slice() : []
+        if (ids.some((value) => canonicalSessionId(String(value)) === target)) return record
+        const anchor = before
+          ? ids.findIndex((value) => canonicalSessionId(String(value)) === canonicalSessionId(before))
+          : -1
+        if (anchor >= 0) ids.splice(anchor, 0, sessionId)
+        else ids.push(sessionId)
+        return { ...record, sessionIds: ids }
+      })
+      .then(() => ({ ok: true, mode: 'mutate' }))
+      .catch((error) => {
+        console.error('[dsh-toolbox] reattach: 写记录失败', error)
+        return { ok: false, reason: 'mutate-failed' }
+      })
+  } catch (error) {
+    console.error('[dsh-toolbox] reattach: 写记录失败', error)
+    return { ok: false, reason: 'mutate-failed' }
   }
 }
 

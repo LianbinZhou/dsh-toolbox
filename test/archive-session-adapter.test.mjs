@@ -98,3 +98,59 @@ test('adapter · a THROWING getter falls back to the persisted unit, not an empt
   })
   assert.deepEqual(broken.readArchived(), [ID], 'a throwing seam must not look like an empty archive')
 })
+
+/* ------------------------------------------------------------------ *
+ * 快照与摘行的回归                                                     *
+ *                                                                     *
+ * 这两条路径以前没有任何测试：registry 没有 list() 时 snapshotWorkspace *
+ * 会提前 return，于是「用了却没导入的 canonicalSessionId」永远走不到，   *
+ * 381 项全绿、真机一删却 ReferenceError。下面的 registry 带 list()，    *
+ * 把这条路径逼出来；entity.sessionIds 被故意做成会抛，证明两者都只读     *
+ * 原始 record，不碰 filtered getter。                                  *
+ * ------------------------------------------------------------------ */
+
+function entityRegistry(sessionIds) {
+  const record = { sessionIds: [...sessionIds] }
+  const entity = {
+    id: 'ws-1',
+    record,
+    get sessionIds() {
+      throw new Error('filtered getter must not be used')
+    },
+    async detachSession(id) {
+      record.sessionIds = record.sessionIds.filter((value) => value !== id)
+    },
+  }
+  return {
+    archivedSessionIds: new Set(sessionIds),
+    list: () => [entity],
+    unarchiveSession() {},
+  }
+}
+
+test('adapter · snapshotWorkspace reads the raw record, never the throwing getter', () => {
+  const adapter = createSessionAdapter({
+    registry: entityRegistry([ID]),
+    sessions: {},
+    sessionsRoot: 'C:/tmp/sessions',
+    storageFallback: () => [],
+  })
+  const seat = adapter.snapshotWorkspace(ID)
+  assert.ok(seat, 'a snapshot must be produced')
+  assert.equal(seat.workspaceId, 'ws-1')
+  assert.equal(seat.sessionId, ID)
+})
+
+test('adapter · dropWorkspaceRows honours the snapshot and uses detachSession', async () => {
+  const reg = entityRegistry([ID])
+  const adapter = createSessionAdapter({
+    registry: reg,
+    sessions: {},
+    sessionsRoot: 'C:/tmp/sessions',
+    storageFallback: () => [],
+  })
+  const result = await adapter.dropWorkspaceRows(ID, { workspaceId: 'ws-1' })
+  assert.equal(result.ok, true)
+  assert.equal(result.dropped, 1, 'the row must be detached')
+  assert.deepEqual(reg.list()[0].record.sessionIds, [], 'the record no longer holds it')
+})

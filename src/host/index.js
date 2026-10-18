@@ -220,7 +220,10 @@ export function apply(ctx, config) {
           const outcome = api.delete(id, options)
           Promise.resolve(outcome).then((r) => {
             if (r && r.ok === false) console.warn('[dsh-toolbox] 删除被拒 ' + id + ' -> ' + r.reason + (r.status ? ' (HTTP ' + r.status + ')' : ''))
-          }).catch(() => {})
+          }).catch((error) => {
+            // 这条路径以前是 .catch(() => {})：崩了也一声不吭。
+            console.error('[dsh-toolbox] api.delete 抛错 id=' + id, error)
+          })
           return outcome
         },
       })

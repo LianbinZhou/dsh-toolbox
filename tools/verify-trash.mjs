@@ -38,15 +38,20 @@ const workspace = readJson(join(HOME, 'storages', 'workspace.json'), { global: {
 const projcache = readJson(join(HOME, 'storages', 'session_projcache.json'), { tables: {} })
 
 const entries = Array.isArray(journal.entries) ? journal.entries : []
-const trashIds = new Set(entries.map((entry) => String(entry.id)))
 const bare = (id) => String(id).replace(/^session-/, '')
+const trashIds = new Set(entries.map((entry) => bare(entry.id)))
 
-// 所有 workspace 的 sessionIds 摊平
+// 所有 workspace 的 sessionIds 摊平。
+// 真实结构（2026-10-18 实测）：顶层 { unit, global, tables }，工作区表在
+// `tables.workspaces`，每个值是 { path, title, sessionIds, createdAt, updatedAt }。
+// 旧版读 `workspace.workspaces`，那里根本没有内容 —— 于是永远「没有残留」，假绿。
+const workspaceTables = workspace.tables?.workspaces
 const workspaceRows = []
-const workspaceTables = workspace.tables?.workspaces ?? workspace.workspaces ?? {}
-for (const [key, entity] of Object.entries(workspaceTables)) {
-  for (const id of Array.isArray(entity?.sessionIds) ? entity.sessionIds : []) {
-    workspaceRows.push({ workspaceKey: key, id: String(id) })
+if (workspaceTables !== undefined) {
+  for (const [key, entity] of Object.entries(workspaceTables)) {
+    for (const id of Array.isArray(entity?.sessionIds) ? entity.sessionIds : []) {
+      workspaceRows.push({ workspaceKey: key, id: String(id) })
+    }
   }
 }
 
@@ -55,15 +60,20 @@ const cacheKeys = Object.keys(projcache?.tables?.sessions ?? {})
 say('=== 本机磁盘状态 ===')
 say(`  DSH 根：${HOME}`)
 say(`  回收箱记录：${entries.length} 条`)
+if (workspaceTables === undefined) say('  ⚠ workspace.json 里没有 tables.workspaces：结构变了，证据 2 不可信')
 for (const entry of entries) {
   const left = typeof entry.at === 'number'
     ? Math.max(0, Math.ceil((entry.at + (entry.keptDays ?? 7) * DAY - Date.now()) / DAY))
     : '?'
-  say(`    - ${entry.id}  phase=${entry.phase}  title=${entry.title ?? '(无)'}  剩余≈${left} 天`)
+  // 清理失败的条目直接标出来：它才是「侧栏还有残留」的嫌疑人。
+  const stuck = entry.lastError
+    ? `  ⚠ cleanup 未完成 attempts=${entry.cleanupAttempts ?? 0} lastError=${String(entry.lastError).slice(0, 90)}`
+    : ''
+  say(`    - ${entry.id}  phase=${entry.phase}  title=${entry.title ?? '(无)'}  剩余≈${left} 天${stuck}`)
 }
 
 // 第 2 条：workspace 里还有没有已删除的 id
-const ghosts = workspaceRows.filter((row) => trashIds.has(row.id))
+const ghosts = workspaceRows.filter((row) => trashIds.has(bare(row.id)))
 say('')
 say('=== 证据 2：workspace 成员里是否还有已删除的 id ===')
 say(ghosts.length === 0
@@ -114,7 +124,7 @@ if (trash.status === 200) {
 
 // 第 6 条：归档集合
 const archived = Array.isArray(workspace.global?.archivedSessionIds) ? workspace.global.archivedSessionIds : []
-const archiveGhosts = archived.filter((id) => trashIds.has(String(id)))
+const archiveGhosts = archived.filter((id) => trashIds.has(bare(id)))
 say('')
 say('=== 证据 6：归档集合里是否还有回收箱里的 id ===')
 say(archived.length === 0
@@ -126,3 +136,5 @@ say(archived.length === 0
 say('')
 say('说明：证据 1（删除后侧栏立即消失）与证据 5（恢复回原工作区）需要真点一次，')
 say('      本脚本只做磁盘与接口侧的核对。')
+say('      ⚠ 本脚本读的是**磁盘**，而侧栏来自运行时内存，落盘有延迟；')
+say('      刚删完就查可能看到「没有残留」其实只是还没写下去。')
