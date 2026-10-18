@@ -234,9 +234,11 @@ export const SERVICE_CASES = [
       const service = createService(deps)
       const result = await service.delete(ID_A)
       assert.equal(result.ok, true, 'absent + archived is the cleanup-only case')
-      // 删除**保留**归档标记：清掉它等于 unarchive，会话会以「未分组」身份
-      // 回到侧栏，而文件已经在回收箱里——用户看到两份幽灵。
-      assert.equal(world.isArchived(ID_A), true, 'the archive marker must survive the delete')
+      // 删除必须清归档标记。
+      // 旧设计（保留标记）是为了避开侧栏残留，但那把「指向空目录的归档」留给了
+      // DSH 的其他归档消费者。新版靠 dropWorkspaceRows 摘掉工作区行来解决残留，
+      // 所以标记可以也应该清掉：标记清 + 行摘 = 彻底消失。
+      assert.equal(world.isArchived(ID_A), false, 'the archive marker must be cleared on delete')
     },
   },
 
@@ -493,7 +495,7 @@ export const SERVICE_CASES = [
       assert.ok(['already-deleted', 'not-archived'].includes(second.reason), 'got ' + second.reason)
       assert.equal(world.calls.rename.length, 1)
       // 删除不再调 unarchive（见 D1c 的注释）：标记留着，侧栏才不多出一行。
-      assert.equal(world.calls.unarchive.length, 0, 'delete must not unarchive')
+      assert.ok(world.calls.unarchive.length > 0, 'delete must unarchive')
     },
   },
   {

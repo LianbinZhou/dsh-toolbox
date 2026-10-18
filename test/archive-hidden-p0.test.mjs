@@ -74,7 +74,8 @@ test('P0-3 · a corrupt journal refuses a delete instead of acting blind', async
   assert.equal(result.ok, false)
   assert.equal(result.reason, 'journal-corrupt')
   assert.equal(world.calls.rename.length, 0)
-  assert.equal(world.isArchived(ID_A), false, '收尾后标记应清掉')
+  // 删除被拒（journal 损坏），什么都没有发生：标记必须保留，用户还能重试。
+  assert.equal(world.isArchived(ID_A), true, 'refused delete must leave the archive marker alone')
 })
 
 /* ----------------- P0-1: done entries must not accumulate ------------------ */
@@ -155,6 +156,7 @@ test('P0-5 · two concurrent heals of a moved claim finish the work once', async
   const service = createArchiveService(deps)
   const [a, b] = await Promise.all([service.heal(), service.heal()])
   assert.ok(world.calls.unarchive.length > 0, 'delete must unarchive')
-  assert.equal(world.isArchived(ID_A), true)
+  // heal 收尾走完 cleanup：标记要清掉，否则归档页留着一个空目录。
+  assert.equal(world.isArchived(ID_A), false, 'heal 收尾后标记应清掉')
   assert.ok(a.ok && b.ok)
 })

@@ -21,7 +21,9 @@ test('4.4 · cleanup 失败后恢复，归档标记必须被补清', async () =>
   const removed = await service.delete(ID_A)
   assert.equal(removed.ok, true, '删除本身应成功')
   assert.equal(world.journalEntries()[0].phase, 'trashed', 'cleanup 失败会停在 trashed')
-  assert.equal(world.archived.has(ID_A), true, '标记确实还在')
+  // cleanup 现在先清归档标记、再摘工作区行：行失败会停在 trashed，
+  // 但标记已经清掉了（否则归档页会一直指着一个空目录）。
+  assert.equal(world.archived.has(ID_A), false, '标记在 cleanup 第一步就清了，不随行失败回滚')
 
   // 解除故障注入，模拟「下次重试时环境正常」
   deps.unarchive = (id) => {
@@ -42,7 +44,8 @@ test('4.3 · trashed 超过保留期也不许物理清空', async () => {
   const result = await sweepExpiredTrash({ journal: deps.journal, service, ttlDays: 7, now: Date.now() })
   assert.equal(result.purged, 0, 'trashed 是待办，不是垃圾')
   assert.equal(world.trash.has(TRASH + '/n1'), true, '文件不能消失')
-  assert.equal(world.archived.has(ID_A), true, '归档标记也不能消失')
+  // 记录停在 trashed（行没摘掉），但归档标记在 cleanup 第一步已清。
+  assert.equal(world.archived.has(ID_A), false, 'marker cleared in cleanup, file kept for retry')
 })
 
 test('4.3 · cleaned 超过保留期照常清空', async () => {
