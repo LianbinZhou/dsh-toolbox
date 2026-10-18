@@ -23,6 +23,7 @@ import { createFileJournal } from './journal.js'
 import { removeTrashTree } from './trash-gc.js'
 import { createFileAudit } from './audit.js'
 import { createArchiveService } from './service.js'
+import { isInside } from './paths.js'
 
 /**
  * @param {object} options
@@ -33,6 +34,7 @@ export function createServiceDeps({ home, adapter, maxProtected = 200, ttlDays =
   if (typeof home !== 'string' || home.length === 0) throw new TypeError('createServiceDeps needs a home directory')
   if (!adapter || typeof adapter.readArchived !== 'function') throw new TypeError('createServiceDeps needs a session adapter')
 
+  const sessionsRoot = join(home, '..', 'sessions')
   const base = join(home, 'archive')
   const trash = join(base, 'trash')
   // The volume check stats both paths, so both must exist before the first delete.
@@ -52,6 +54,10 @@ export function createServiceDeps({ home, adapter, maxProtected = 200, ttlDays =
     dropWorkspaceRows: (id) => adapter.dropWorkspaceRows?.(id),
     scrubCache: (id) => adapter.scrubCache?.(id),
     trashRoot: () => trash,
+    /** 会话目录是否仍在 sessions 根内（真实路径边界，不是前缀比较）。 */
+    isInsideSessions: (candidate) => isInside(sessionsRoot, candidate),
+    /** 垃圾箱路径是否仍在 trash 根内。 */
+    isInsideTrash: (candidate) => isInside(trash, candidate),
     sameVolume(a, b) {
       try {
         const left = statSync(a, { throwIfNoEntry: false })

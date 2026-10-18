@@ -136,6 +136,12 @@ export function createArchiveService(deps) {
     // 双拼写下 bare 与 session- 两种写法指的是同一个会话，按 canonical 比。
     if (canonicalSessionId(tail) !== canonicalSessionId(String(entry.id))) return false
 
+    // 4.2：末段对还不够，必须确认它真的在会话根里。
+    // startsWith 挡不住 C:/outside/<id> 这种根外绝对路径。
+    if (typeof deps.isInsideSessions === 'function' && !deps.isInsideSessions(entry.originalPath)) return false
+    // trashPath 自身也要做边界：<trash>/../outside/n1 只是前缀对，实际在根外。
+    if (typeof deps.isInsideTrash === 'function' && !deps.isInsideTrash(entry.trashPath)) return false
+
     return true
   }
 

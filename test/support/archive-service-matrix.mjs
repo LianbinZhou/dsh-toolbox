@@ -119,6 +119,17 @@ export function makeWorld(options = {}) {
     },
     exists: (path) => [...dirs.values()].includes(path) || trash.has(path),
     trashRoot: () => TRASH,
+    // 真实边界：会话必须在 <sessionsRoot>/<project>/<id> 下，垃圾箱路径必须在 TRASH 下。
+    isInsideSessions: (candidate) => {
+      const norm = String(candidate).replace(/\\/g, '/')
+      if (norm.includes('..')) return false
+      return norm.startsWith('/sessions/') || norm.startsWith('C:/home/sessions/')
+    },
+    isInsideTrash: (candidate) => {
+      const norm = String(candidate).replace(/\\/g, '/')
+      if (norm.includes('..')) return false
+      return norm.startsWith(TRASH + '/')
+    },
     maxProtected: options.maxProtected,
     sameVolume: () => options.sameVolume !== false,
     unarchive: (id) => {
