@@ -189,9 +189,12 @@ export function createSessionAdapter({ registry, sessions, sessionsRoot, storage
      * 侧栏的会话行来自这里，不是来自目录——目录搬走了、行还在，用户就会看到
      * 「删了但还挂在未分组下面」。旧插件实现过，这里是照搬。
      */
-    async dropWorkspaceRows(id) {
+    async dropWorkspaceRows(id, seat) {
       if (!hasRegistry || typeof registry.list !== 'function') return { ok: false, reason: 'no-registry' }
       const drop = canonicalSessionId(String(id))
+      // 有快照就按快照直取：移动之后 entity.sessionIds 是 filtered getter，
+      // 目录不在了它可能根本不返回这一行，靠它找永远找不到。
+      const targetWorkspace = seat && seat.workspaceId ? String(seat.workspaceId) : null
       let entities
       try {
         entities = registry.list()
@@ -203,8 +206,16 @@ export function createSessionAdapter({ registry, sessions, sessionsRoot, storage
       console.info('[dsh-toolbox] dropWorkspaceRows: entities=' + (Array.isArray(entities) ? entities.length : typeof entities))
       for (const entity of entities ?? []) {
         if (!entity || typeof entity.mutate !== 'function') continue
-        const ids = Array.isArray(entity.sessionIds) ? entity.sessionIds : []
-        const matched = ids.some((value) => canonicalSessionId(String(value)) === drop)
+        if (targetWorkspace !== null && String(entity.id ?? entity.workspaceId ?? '') !== targetWorkspace) continue
+        // entity.sessionIds 是 filtered getter（目录不在就藏行）；
+        // entity.record.sessionIds 是原始记录，旧记录靠它兜底。
+        const ids = Array.isArray(entity.record?.sessionIds)
+          ? entity.record.sessionIds
+          : Array.isArray(entity.sessionIds)
+            ? entity.sessionIds
+            : []
+        // 快照命中就直接算匹配，不再依赖 filtered getter。
+        const matched = targetWorkspace !== null || ids.some((value) => canonicalSessionId(String(value)) === drop)
         console.info('[dsh-toolbox] dropWorkspaceRows: entity=' + String(entity.id ?? entity.workspaceId ?? '?') + ' rows=' + ids.length + ' matched=' + matched + ' mutatable=' + (typeof entity.mutate === 'function'))
         if (!matched) continue
         try {

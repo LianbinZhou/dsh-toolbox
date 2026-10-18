@@ -43,7 +43,8 @@ const bare = (id) => String(id).replace(/^session-/, '')
 
 // 所有 workspace 的 sessionIds 摊平
 const workspaceRows = []
-for (const [key, entity] of Object.entries(workspace.workspaces ?? {})) {
+const workspaceTables = workspace.tables?.workspaces ?? workspace.workspaces ?? {}
+for (const [key, entity] of Object.entries(workspaceTables)) {
   for (const id of Array.isArray(entity?.sessionIds) ? entity.sessionIds : []) {
     workspaceRows.push({ workspaceKey: key, id: String(id) })
   }

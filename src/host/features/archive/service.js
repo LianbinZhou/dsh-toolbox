@@ -180,13 +180,13 @@ export function createArchiveService(deps) {
   }
 
   /** 删除后的账务清理：标记 + workspace 行 + projection cache，全部 await。 */
-  async function cleanup(id) {
+  async function cleanup(id, seat) {
     const failed = []
     const markers = await clearArchiveMarkers(id)
     failed.push(...markers.failed)
 
     try {
-      if (typeof deps.dropWorkspaceRows === 'function') await deps.dropWorkspaceRows(id)
+      if (typeof deps.dropWorkspaceRows === 'function') await deps.dropWorkspaceRows(id, seat)
     } catch (error) {
       failed.push('workspace')
     }
@@ -223,7 +223,7 @@ export function createArchiveService(deps) {
     if (!entry) return { ok: true, removedDir: true }
     if (!entryIsSane(entry)) return { ok: false, status: 409, reason: 'journal-corrupt' }
 
-    const failed = await cleanup(id)
+    const failed = await cleanup(id, entry && entry.workspaceSeat)
     if (failed.length > 0) {
       return { ok: true, removedDir: true, reason: 'cleanup-pending', warning: 'deleted with warnings' }
     }
@@ -256,6 +256,15 @@ export function createArchiveService(deps) {
       if (entry.phase !== 'cleaned' && entry.phase !== 'trashed') {
         return { ok: false, status: 409, reason: 'not-in-trash' }
       }
+        // 先补清账务（标记/工作区行/缓存）：清不掉就不许物理删除，
+        // 否则文件没了、workspace 行还在，就是幽灵。
+        const pending = await cleanup(id, entry.workspaceSeat)
+        if (pending.length > 0) {
+          deps.journal.update((entries) => entries.map((current) =>
+            current.id === id ? { ...current, phase: 'trashed', lastError: pending.join(',') } : current,
+          ))
+          return { ok: false, status: 409, reason: 'cleanup-pending' }
+        }
       try {
         deps.removeTree(entry.trashPath)
       } catch (error) {
@@ -338,6 +347,10 @@ export function createArchiveService(deps) {
       }
 
       // D2/T4: the claim is durable and written BEFORE the move.
+      // 移动前记下它在工作区里的位置：移动后 sessionIds 是 filtered getter，
+      // 目录不在了就再也找不到这一行。
+      const workspaceSeat = typeof deps.snapshotWorkspace === 'function' ? deps.snapshotWorkspace(id) : null
+      console.info('[dsh-toolbox] 工作区快照 ' + id + ': ' + JSON.stringify(workspaceSeat))
       const nonce = String(deps.nonce())
       // P0-7: a nonce is used as a path segment; anything but an opaque token can
       // walk out of the trash root.
@@ -355,6 +368,7 @@ export function createArchiveService(deps) {
         ino: probe.identity?.ino,
         realpath: probe.identity?.realpath,
         at: Date.now(),
+        ...(workspaceSeat ? { workspaceSeat } : {}),
         // 记下标题：删完就不在归档集合里了，这是回收箱显示会话名的唯一来源。
         ...(title ? { title } : {}),
       }
@@ -545,15 +559,10 @@ export function createArchiveService(deps) {
 
           // 文件回来了，但归档标记不一定干净：如果当初 cleanup 失败，
           // 状态会停在 trashed、标记还在，下次又会被当成归档会话。
-          const stillArchived = deps.readArchived().some(
-            (value) => canonicalSessionId(String(value)) === canonicalSessionId(String(id)),
-          )
-          if (stillArchived) {
-            try {
-              deps.unarchive(id)
-            } catch (error) {
-              return { ok: true, restored: true, warning: 'cleanup-pending' }
-            }
+          // 两种拼写都清，而且 await——以前只清一个拼写、也不等结果。
+          const cleared = await clearArchiveMarkers(id)
+          if (cleared.failed.length > 0) {
+            return { ok: true, restored: true, warning: 'cleanup-pending' }
           }
           return { ok: true, restored: true }
         }
