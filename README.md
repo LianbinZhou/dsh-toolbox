@@ -89,21 +89,24 @@ dsh-toolbox/
 客户端功能 5 个（`quote-reply` / `panel-menu` / `draft-saver` / `archive-panel` / `plugin-zh`）；
 `session-search` 是**纯宿主**功能，不在客户端清单里 —— 所以"6 个开关、5 个客户端功能"不是笔误。
 
-## 六个开关的真实状态
+## 七个开关的真实状态
 
 | 开关 | 状态 | 功能体 |
 |---|---|---|
 | 会话搜索（宿主工具） | **真**（S2） | `session_search` 工具 + 接管 `session-query-sqlite` 的全文索引 seam |
-| 划词引用 | **真**（S2） | 划选一段 → 浮层「引用 / 复制」；组件从 `dsh-quote-reply` 原样搬入 |
+| 划词引用 | **真**（S2） | 划选一段 → 浮层「引用 / 复制」 |
 | 草稿保险箱 | **真**（S3） | 草稿存储守卫 + 恢复提示条 `[复制][清空][知道了]` |
-| 面板收纳 / 历史归档 / 插件汉化 | **桩** | S4–S5 才迁；现在拨动**不会有任何变化** |
+| 面板收纳 | **真**（S4） | 把侧栏的面板入口收进一个「全部面板」菜单 |
+| 历史归档 | **真**（S4） | 列出归档会话 + 回收箱二级页签（恢复 / 彻底删除） |
+| 归档 HTTP 接口 | **真**（S4，**默认关闭**） | 7 条令牌保护的本机路由；打开才可用 |
+| 插件说明汉化 | **桩** | 真正干活的是独立插件 `dsh-plugin-zh`，本开关暂未迁移 |
 
 ## 构建与测试
 
 ```sh
 npm install
 npm run build              # src/client/index.js -> client.js
-npm test                   # 207 项（含真实 Chromium 的 CORS 用例）
+npm test                   # 410 项（含真实 Chromium 的 CORS 用例）
 node tools/prove-red.mjs   # 把同一套存储矩阵跑在旧实现上：应报 14 红
 ```
 
@@ -139,7 +142,11 @@ node tools/prove-red.mjs   # 把同一套存储矩阵跑在旧实现上：应报
 
 ## 已知边界
 
-- `panel-menu` / `archive-panel` / `plugin-zh` 仍是桩（S4–S5）。
+- **回收箱删除的一瞬间，左侧「未分组」可能闪现一下（不到 1 秒）**。原因是删除会先清掉「已归档」标记，
+  DSH 立刻把这条会话按「未归档」重新分组，而会话列表要到下一步才刷新。
+  **数据 100% 安全**（目录已在回收箱、journal 正常），只是视觉上重渲染了一次。
+  彻底消除需要加一条「两阶段删除」路由，已评估为不值得（见 `docs/S4-封板简报.md` 的已知限制）。
+- `plugin-zh` 仍是桩（真正干活的是独立插件 `dsh-plugin-zh`），S5 再迁。
 - 守卫处于 `needs-refresh` / `unsupported` 时，目前只有 `console.warn` + `window.__DSH_TOOLBOX_DRAFT__`，
   **还没有可见的界面提示**（复核 Bug 单 P2-3，待办）。
 - `plugin-zh` 必须走路 B（DOM + 完整还原）：路 A（官方 locale 注入）已判死 ——
