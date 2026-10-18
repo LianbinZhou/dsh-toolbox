@@ -227,7 +227,15 @@ export function createDeleteHandler({ guard, onDelete, peerOf }) {
           const ok = value.ok !== false
           // P1-5: never pass the service message through — it may contain an
           // absolute path, a stack, or a hint about the filesystem layout.
-          const body = { ok, removedDir: value.removedDir === true }
+          // 说清楚它去了哪儿、能不能捞回来、保留多久——白名单三个字段，
+        // 绝不透传服务层的路径或错误原文。
+        const body = {
+          ok,
+          removedDir: value.removedDir === true,
+          movedToTrash: value.movedToTrash === true,
+          recoverable: value.recoverable === true,
+          keptDays: Number.isFinite(value.keptDays) ? value.keptDays : undefined,
+        }
           if (!ok) body.error = 'delete refused'
           else if (value.warning !== undefined) body.warning = 'deleted with warnings'
           respond(res, ok ? 200 : 409, body)

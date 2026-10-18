@@ -2240,7 +2240,7 @@
         ]),
         view.message ? h("p", { class: "dsh-toolbox-archive-note" }, view.message) : null,
         view.pending ? h("div", { class: "dsh-toolbox-archive-confirm" }, [
-          h("span", null, "移入回收箱？可以随时恢复。"),
+          h("span", null, "移入回收箱（保留 7 天，可恢复）"),
           h(
             "button",
             {
@@ -2273,19 +2273,8 @@
                   class: "danger",
                   disabled: busy || !view.canDelete,
                   onClick: () => {
-                    const name = row.label || row.id;
-                    let yes = false;
-                    try {
-                      yes = window.confirm(`确定要彻底删除这个会话吗？
-
-「${name}」
-
-删除后无法恢复。`);
-                    } catch (error) {
-                      yes = false;
-                    }
-                    if (!yes) return;
-                    run(() => panel.remove(row.id))();
+                    panel.askRemove(row.id);
+                    sync();
                   }
                 },
                 "删除"

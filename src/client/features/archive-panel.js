@@ -121,7 +121,7 @@ export function mount(ctx, env) {
       view.message ? h('p', { class: 'dsh-toolbox-archive-note' }, view.message) : null,
       view.pending
         ? h('div', { class: 'dsh-toolbox-archive-confirm' }, [
-            h('span', null, '移入回收箱？可以随时恢复。'),
+            h('span', null, '移入回收箱（保留 7 天，可恢复）'),
             h(
               'button',
               {
@@ -152,16 +152,9 @@ export function mount(ctx, env) {
                 class: 'danger',
                 disabled: busy || !view.canDelete,
                 onClick: () => {
-                  // 二次确认：删除会真的把会话目录挪进回收站，不能撤销。
-                  const name = row.label || row.id
-                  let yes = false
-                  try {
-                    yes = window.confirm(`确定要彻底删除这个会话吗？\n\n「${name}」\n\n删除后无法恢复。`)
-                  } catch (error) {
-                    yes = false
-                  }
-                  if (!yes) return
-                  run(() => panel.remove(row.id))()
+                  // 只提问，不执行：真正的动作在确认条的「入回收箱」上。
+                  panel.askRemove(row.id)
+                  sync()
                 },
               },
               '删除',
