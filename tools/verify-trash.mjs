@@ -62,8 +62,8 @@ say(`  DSH 根：${HOME}`)
 say(`  回收箱记录：${entries.length} 条`)
 if (workspaceTables === undefined) say('  ⚠ workspace.json 里没有 tables.workspaces：结构变了，证据 2 不可信')
 for (const entry of entries) {
-  // journal 里没有 keptDays：总保留期以接口为准（下面证据 4 会用 expiresAt 算真实剩余）。
-  const left = typeof entry.at === 'number' ? '见证据 4' : '?'
+  // journal 里没有 keptDays：真实剩余天数由下面证据 4 按接口的 expiresAt 算。
+  const left = null
   // 清理失败的条目直接标出来：它才是「侧栏还有残留」的嫌疑人。
   const stuck = entry.lastError
     ? `  ⚠ cleanup 未完成 attempts=${entry.cleanupAttempts ?? 0} lastError=${String(entry.lastError).slice(0, 90)}`
