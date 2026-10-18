@@ -17,6 +17,8 @@
  * - 短于 18 字符不做前缀匹配，避免误伤普通界面文字。
  */
 
+import { createDshAdapter } from '../dsh-adapter.js'
+
 export const PLUGIN_ZH_DICT = Object.freeze({
   /* --- official core --- */
   'The shared dsh core as a profile bundle: the first patch layer of base-backed profiles, inserting core rows over the empty profile root':
@@ -130,37 +132,67 @@ export function looksEnglish(text) {
 /**
  * 翻译一个文本节点，并把原文记进 `applied`。
  *
- * 幂等：同一个节点第二次进来直接跳过（`__dshToolboxZh` 标记），
- * 所以 observer 的多次 pass 不会把「中文」当成新文本再查一遍。
+ * 幂等：`applied` 是 Map<node, {original, translated}>。
+ * 同一个节点再次进来时，若内容仍等于我们写进去的 `translated` 就跳过；
+ * 若被 React 改回英文，则把当前值当新原文重新查（否则开关明明开着却显示英文）。
  *
  * @returns {boolean} 是否命中字典
  */
 export function translateTextNode(node, lookup, applied) {
   const parent = node.parentElement
   if (!parent || SKIP_TAGS.has(parent.tagName)) return false
-  if (node.__dshToolboxZh) return true
   const raw = node.nodeValue
   if (!raw) return false
+
+  const previous = applied.get(node)
+  if (previous) {
+    // 还是我们写进去的中文 → 不用重翻。
+    if (node.nodeValue === previous.translated) return true
+    // React 把同一个节点改回了别的文本：把当前值当新原文，重新查。
+    applied.delete(node)
+  }
+
   const zh = lookup(raw)
   if (zh === undefined) return false
   if (raw !== zh) {
-    applied.push({ node, original: raw })
     node.nodeValue = zh
-    node.__dshToolboxZh = true
+    applied.set(node, { original: raw, translated: zh })
   }
   return true
+}
+
+/**
+ * 清掉已经脱离 DOM 的记录。
+ *
+ * 必须做：React 每次重渲染都会替换文本节点，旧节点留在 Map 里就是内存泄漏。
+ */
+export function pruneApplied(applied) {
+  if (!applied || typeof applied.keys !== 'function') return 0
+  let removed = 0
+  for (const node of applied.keys()) {
+    if (!node || node.isConnected === false) {
+      applied.delete(node)
+      removed += 1
+    }
+  }
+  return removed
 }
 
 /** 逐条还原英文原文。还原失败（节点已脱离 DOM）只跳过，不抛。 */
 export function restoreApplied(applied) {
   let restored = 0
-  for (const entry of applied.splice(0)) {
+  if (!applied || typeof applied.keys !== 'function') return restored
+  for (const node of [...applied.keys()]) {
+    const record = applied.get(node)
+    applied.delete(node)
+    if (!node || !record) continue
+    // 节点已脱离 DOM：只清记录，别写。
+    if (node.isConnected === false) continue
+    // 内容已经被改过（React 复用节点）：绝不覆盖新文本，只清记录。
+    if (node.nodeValue !== record.translated) continue
     try {
-      if (entry.node) {
-        entry.node.nodeValue = entry.original
-        delete entry.node.__dshToolboxZh
-        restored += 1
-      }
+      node.nodeValue = record.original
+      restored += 1
     } catch (error) {
       /* 节点没了就不管 */
     }
@@ -181,7 +213,8 @@ export function mountPluginZh({ locale = 'zh', doc, win } = {}) {
   const documentRef = doc ?? (typeof document !== 'undefined' ? document : undefined)
   const windowRef = win ?? (typeof window !== 'undefined' ? window : undefined)
   const lookup = buildLookup(PLUGIN_ZH_DICT)
-  const applied = []
+  // WeakMap 语义：节点不被这里强引用；每轮 pass 后 prune 掉已脱离 DOM 的。
+  const applied = new Map()
   const state = { unknown: new Set(), replaced: 0, passes: 0, lastPass: 0 }
   const enabled = String(locale).toLowerCase().startsWith('zh')
 
@@ -210,6 +243,7 @@ export function mountPluginZh({ locale = 'zh', doc, win } = {}) {
     state.passes += 1
     if (root.nodeType === 3) {
       if (translateTextNode(root, lookup, applied)) state.lastPass += 1
+      pruneApplied(applied)
       state.replaced += state.lastPass
       return state.lastPass
     }
@@ -231,6 +265,7 @@ export function mountPluginZh({ locale = 'zh', doc, win } = {}) {
       }
     }
     state.replaced += state.lastPass
+    pruneApplied(applied)
     return state.lastPass
   }
 
@@ -328,4 +363,29 @@ export function mountPluginZh({ locale = 'zh', doc, win } = {}) {
       return restoreApplied(applied)
     },
   }
+}
+
+
+/**
+ * 容器用的挂载入口。
+ *
+ * 语言判断、adapter 取服务、mount、dispose 全部在这里；
+ * `features.js` 只留一行配置（Pi 要求：注册表里不许有功能逻辑）。
+ */
+export function mountFeature(ctx, env) {
+  const dsh = createDshAdapter(ctx)
+  const localeService = dsh.get('locale')
+
+  let locale = 'zh'
+  try {
+    const snapshot = localeService && typeof localeService.getSnapshot === 'function' ? localeService.getSnapshot() : undefined
+    const active = snapshot && (snapshot.active || snapshot.locale)
+    if (active !== undefined) locale = String(active).toLowerCase()
+  } catch (error) {
+    /* 读不到语言就按中文处理 */
+  }
+
+  const handle = mountPluginZh({ locale })
+  env.track(() => handle.dispose())
+  return () => handle.dispose()
 }

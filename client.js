@@ -8,7 +8,7 @@
     layout: (service) => typeof service?.selectPanel === "function",
     locale: (service) => typeof service?.register === "function"
   });
-  var REQUIRED_SERVICES = Object.freeze(["slots"]);
+  var REQUIRED_SERVICES = Object.freeze(["slots", "locale", "sessions"]);
   function createDshAdapter(ctx, options = {}) {
     const label = options.label ?? "dsh-toolbox";
     const logger = options.logger ?? console;
@@ -22,6 +22,25 @@
         logger.warn("[" + label + "] 官方服务不可用: " + service + "（" + detail + "）—— 相关子功能已禁用，插件继续运行");
       } catch (error) {
       }
+    };
+    const probe = (name) => {
+      let service;
+      try {
+        service = ctx ? ctx[name] : void 0;
+      } catch (error) {
+        service = void 0;
+      }
+      if (service === void 0 && ctx && typeof ctx.get === "function") {
+        try {
+          service = ctx.get(name);
+        } catch (error) {
+          service = void 0;
+        }
+      }
+      const check = SERVICE_CHECKS[name];
+      if (service === void 0) return { state: "missing" };
+      if (typeof check === "function" && !check(service)) return { state: "degraded" };
+      return { state: "ok", service };
     };
     const get = (name) => {
       const check = SERVICE_CHECKS[name];
@@ -57,13 +76,24 @@
       }
       return service;
     };
-    const selfCheck = () => ({
-      label,
-      ok: missing.length === 0 && degraded.length === 0,
-      missing: [...missing],
-      degraded: [...degraded],
-      available: Object.keys(SERVICE_CHECKS).filter((name) => missing.indexOf(name) < 0 && degraded.indexOf(name) < 0)
-    });
+    const selfCheck = () => {
+      const found = { missing: [], degraded: [], available: [] };
+      for (const name of Object.keys(SERVICE_CHECKS)) {
+        const probed = probe(name);
+        if (probed.state === "missing") found.missing.push(name);
+        else if (probed.state === "degraded") found.degraded.push(name);
+        else found.available.push(name);
+      }
+      for (const name of found.missing) if (!missing.includes(name)) missing.push(name);
+      for (const name of found.degraded) if (!degraded.includes(name)) degraded.push(name);
+      return {
+        label,
+        ok: found.missing.length === 0 && found.degraded.length === 0,
+        missing: found.missing,
+        degraded: found.degraded,
+        available: found.available
+      };
+    };
     return { get, require: require2, selfCheck, missing, degraded };
   }
 
@@ -222,7 +252,7 @@
         onError(scope.label, error);
       }
     }
-    function mountFeature(feature) {
+    function mountFeature2(feature) {
       const mine = (generation.get(feature.id) ?? 0) + 1;
       generation.set(feature.id, mine);
       state.set(feature.id, MOUNTING);
@@ -262,7 +292,7 @@
           if (!settingsReady) continue;
           if (values[feature.configKey] === void 0) continue;
         }
-        if (want && phase === OFF) mountFeature(feature);
+        if (want && phase === OFF) mountFeature2(feature);
         else if (!want && (phase === MOUNTED || phase === MOUNTING)) unmountFeature(feature);
       }
     }
@@ -2736,27 +2766,44 @@
   function translateTextNode(node, lookup, applied) {
     const parent = node.parentElement;
     if (!parent || SKIP_TAGS.has(parent.tagName)) return false;
-    if (node.__dshToolboxZh) return true;
     const raw = node.nodeValue;
     if (!raw) return false;
+    const previous = applied.get(node);
+    if (previous) {
+      if (node.nodeValue === previous.translated) return true;
+      applied.delete(node);
+    }
     const zh = lookup(raw);
     if (zh === void 0) return false;
     if (raw !== zh) {
-      applied.push({ node, original: raw });
       node.nodeValue = zh;
-      node.__dshToolboxZh = true;
+      applied.set(node, { original: raw, translated: zh });
     }
     return true;
   }
+  function pruneApplied(applied) {
+    if (!applied || typeof applied.keys !== "function") return 0;
+    let removed = 0;
+    for (const node of applied.keys()) {
+      if (!node || node.isConnected === false) {
+        applied.delete(node);
+        removed += 1;
+      }
+    }
+    return removed;
+  }
   function restoreApplied(applied) {
     let restored = 0;
-    for (const entry of applied.splice(0)) {
+    if (!applied || typeof applied.keys !== "function") return restored;
+    for (const node of [...applied.keys()]) {
+      const record = applied.get(node);
+      applied.delete(node);
+      if (!node || !record) continue;
+      if (node.isConnected === false) continue;
+      if (node.nodeValue !== record.translated) continue;
       try {
-        if (entry.node) {
-          entry.node.nodeValue = entry.original;
-          delete entry.node.__dshToolboxZh;
-          restored += 1;
-        }
+        node.nodeValue = record.original;
+        restored += 1;
       } catch (error) {
       }
     }
@@ -2766,7 +2813,7 @@
     const documentRef = doc ?? (typeof document !== "undefined" ? document : void 0);
     const windowRef = win ?? (typeof window !== "undefined" ? window : void 0);
     const lookup = buildLookup(PLUGIN_ZH_DICT);
-    const applied = [];
+    const applied = /* @__PURE__ */ new Map();
     const state = { unknown: /* @__PURE__ */ new Set(), replaced: 0, passes: 0, lastPass: 0 };
     const enabled = String(locale).toLowerCase().startsWith("zh");
     let observer = null;
@@ -2788,6 +2835,7 @@
       state.passes += 1;
       if (root.nodeType === 3) {
         if (translateTextNode(root, lookup, applied)) state.lastPass += 1;
+        pruneApplied(applied);
         state.replaced += state.lastPass;
         return state.lastPass;
       }
@@ -2809,6 +2857,7 @@
         }
       }
       state.replaced += state.lastPass;
+      pruneApplied(applied);
       return state.lastPass;
     };
     const toast = (count) => {
@@ -2897,6 +2946,20 @@
       }
     };
   }
+  function mountFeature(ctx, env) {
+    const dsh = createDshAdapter(ctx);
+    const localeService = dsh.get("locale");
+    let locale = "zh";
+    try {
+      const snapshot = localeService && typeof localeService.getSnapshot === "function" ? localeService.getSnapshot() : void 0;
+      const active = snapshot && (snapshot.active || snapshot.locale);
+      if (active !== void 0) locale = String(active).toLowerCase();
+    } catch (error) {
+    }
+    const handle = mountPluginZh({ locale });
+    env.track(() => handle.dispose());
+    return () => handle.dispose();
+  }
 
   // src/client/features.js
   function createFeatureProbe() {
@@ -2963,18 +3026,11 @@
         title: "插件汉化",
         // 可逆：关掉必须把英文还原回去（S5 从独立插件迁入时新增的能力）。
         reversible: true,
+        // 一行注册：逻辑全在 features/plugin-zh.js（读 locale 也已走 adapter）。
         mount(ctx, env) {
-          let locale = "zh";
-          try {
-            const snapshot = ctx.locale && ctx.locale.getSnapshot ? ctx.locale.getSnapshot() : void 0;
-            const active = snapshot && (snapshot.active || snapshot.locale);
-            if (active !== void 0) locale = String(active).toLowerCase();
-          } catch (error) {
-          }
-          const handle = mountPluginZh({ locale });
-          env.track(() => handle.dispose());
           probe.bump("plugin-zh");
           track("plugin-zh", env);
+          return mountFeature(ctx, env);
         }
       }
     ]);

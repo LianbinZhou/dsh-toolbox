@@ -31,7 +31,7 @@ test('adapter · 缺服务时返回 undefined 并只警告一次', () => {
   assert.equal(dsh.get('sessions'), undefined)
   assert.equal(dsh.get('sessions'), undefined, '第二次读也不抛')
   assert.equal(logger.lines.length, 1, '同一个服务只警告一次，别刷屏')
-  assert.deepEqual(dsh.selfCheck().missing, ['sessions'])
+  assert.ok(dsh.selfCheck().missing.includes('sessions'), '缺失清单必须包含 sessions')
   assert.equal(dsh.selfCheck().ok, false)
 })
 
@@ -55,7 +55,8 @@ test('adapter · ctx 属性读取抛异常时不崩', () => {
 test('adapter · 必需服务缺失时 require 明确抛错', () => {
   const dsh = createDshAdapter({}, { logger: silentLogger() })
   assert.throws(() => dsh.require('slots'), /缺少必需的官方服务/)
-  assert.equal(dsh.require('sessions'), undefined, '可选服务缺失只返回 undefined')
+  assert.throws(() => dsh.require('sessions'), /缺少必需的官方服务/, 'sessions 也是必需服务（web profile 必有）')
+  assert.equal(dsh.require('configForms'), undefined, '可选服务缺失只返回 undefined')
 })
 
 test('callOptional · 方法不存在或抛错都返回 undefined', async () => {

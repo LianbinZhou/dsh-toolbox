@@ -25,8 +25,13 @@ export const SERVICE_CHECKS = Object.freeze({
   locale: (service) => typeof service?.register === 'function',
 })
 
-/** 缺了它整个插件就没法工作的服务。 */
-export const REQUIRED_SERVICES = Object.freeze(['slots'])
+/**
+ * 缺了它整个插件就没法工作的服务（在 web profile 里这三者必然存在）。
+ * 选「必需」而不是「可选等待」，是因为把它们放进可选路径只会让
+ * 删除/恢复悄悄降级成「侧栏需要手动刷新」，反而更难发现。
+ * `configForms` / `layout` 才是真可选：缺了只影响对应功能。
+ */
+export const REQUIRED_SERVICES = Object.freeze(['slots', 'locale', 'sessions'])
 
 /**
  * 包一层官方的 ctx。
@@ -61,6 +66,27 @@ export function createDshAdapter(ctx, options = {}) {
    * @param {string} name
    * @returns {object|undefined}
    */
+  /** 只读探测：不记录、不警告，供 selfCheck 使用。 */
+  const probe = (name) => {
+    let service
+    try {
+      service = ctx ? ctx[name] : undefined
+    } catch (error) {
+      service = undefined
+    }
+    if (service === undefined && ctx && typeof ctx.get === 'function') {
+      try {
+        service = ctx.get(name)
+      } catch (error) {
+        service = undefined
+      }
+    }
+    const check = SERVICE_CHECKS[name]
+    if (service === undefined) return { state: 'missing' }
+    if (typeof check === 'function' && !check(service)) return { state: 'degraded' }
+    return { state: 'ok', service }
+  }
+
   const get = (name) => {
     const check = SERVICE_CHECKS[name]
     let service
@@ -104,13 +130,31 @@ export function createDshAdapter(ctx, options = {}) {
   }
 
   /** 结构化自检，供诊断入口与真机排障使用。 */
-  const selfCheck = () => ({
-    label,
-    ok: missing.length === 0 && degraded.length === 0,
-    missing: [...missing],
-    degraded: [...degraded],
-    available: Object.keys(SERVICE_CHECKS).filter((name) => missing.indexOf(name) < 0 && degraded.indexOf(name) < 0),
-  })
+  /**
+   * 结构化自检。
+   *
+   * **每次都真实探测所有服务**，不依赖「之前有没有 get 过」——
+   * 否则一个服务都没有的环境也会返回 ok:true，真机排障第一步就被骗。
+   */
+  const selfCheck = () => {
+    const found = { missing: [], degraded: [], available: [] }
+    for (const name of Object.keys(SERVICE_CHECKS)) {
+      const probed = probe(name)
+      if (probed.state === 'missing') found.missing.push(name)
+      else if (probed.state === 'degraded') found.degraded.push(name)
+      else found.available.push(name)
+    }
+    // 让 get() 之后的警告/记录与真实状态同步（只有探测过的才进列表）。
+    for (const name of found.missing) if (!missing.includes(name)) missing.push(name)
+    for (const name of found.degraded) if (!degraded.includes(name)) degraded.push(name)
+    return {
+      label,
+      ok: found.missing.length === 0 && found.degraded.length === 0,
+      missing: found.missing,
+      degraded: found.degraded,
+      available: found.available,
+    }
+  }
 
   return { get, require, selfCheck, missing, degraded }
 }

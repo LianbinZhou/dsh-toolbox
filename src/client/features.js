@@ -18,7 +18,7 @@ import { mount as quoteReplyMount } from './features/quote-reply.js'
 import { mount as draftSaverMount } from './features/draft-saver.js'
 import { mount as panelMenuMount } from './features/panel-menu.js'
 import { mount as archivePanelMount } from './features/archive-panel.js'
-import { mountPluginZh } from './features/plugin-zh.js'
+import { mountFeature as mountPluginZhFeature } from './features/plugin-zh.js'
 
 /** One counter per mount, so the tests can assert mount counts. */
 export function createFeatureProbe() {
@@ -93,19 +93,11 @@ export function createFeatures(probe, host) {
       title: '插件汉化',
       // 可逆：关掉必须把英文还原回去（S5 从独立插件迁入时新增的能力）。
       reversible: true,
+      // 一行注册：逻辑全在 features/plugin-zh.js（读 locale 也已走 adapter）。
       mount(ctx, env) {
-        let locale = 'zh'
-        try {
-          const snapshot = ctx.locale && ctx.locale.getSnapshot ? ctx.locale.getSnapshot() : undefined
-          const active = snapshot && (snapshot.active || snapshot.locale)
-          if (active !== undefined) locale = String(active).toLowerCase()
-        } catch (error) {
-          /* 读不到语言就按中文处理 */
-        }
-        const handle = mountPluginZh({ locale })
-        env.track(() => handle.dispose())
         probe.bump('plugin-zh')
         track('plugin-zh', env)
+        return mountPluginZhFeature(ctx, env)
       },
     },
   ])
