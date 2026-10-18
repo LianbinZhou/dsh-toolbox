@@ -137,10 +137,27 @@ export function createSessionAdapter({ registry, sessions, sessionsRoot, storage
     return []
   }
 
+  /**
+   * 会话「正在使用」判定。
+   *
+   * 以前只要 sessions.get(id) 存在就算活——但那只说明会话被加载进内存
+   * （用户打开过、或刚从回收箱恢复过），并不代表它在跑。
+   * 结果是「打开过就永远删不掉」（真机现场：running=false 仍报 session-is-live）。
+   *
+   * 现在看真实的运行标志；拿不到任何标志时按「不拦」处理，
+   * 因为删除前已经要求它处于归档状态，误删风险远小于「永远删不掉」。
+   */
   const isLive = (id) => {
     try {
       if (!sessions || typeof sessions.get !== 'function') return true // unknown => refuse
-      return sessions.get(id) !== undefined
+      const session = sessions.get(id)
+      if (session === undefined || session === null) return false
+      const running = session.running ?? session.isRunning ?? session.status ?? session.state
+      if (typeof running === 'boolean') return running
+      if (typeof running === 'string') {
+        return ['running', 'busy', 'active', 'streaming'].includes(running)
+      }
+      return false
     } catch (error) {
       return true
     }

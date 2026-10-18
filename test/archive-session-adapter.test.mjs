@@ -39,8 +39,13 @@ test('adapter · the archived set is re-read on every call, never cached', () =>
 })
 
 test('adapter · live comes from sessions.get, and an unknown state refuses', () => {
-  const open = createSessionAdapter({ registry: registry(), sessions: { get: () => ({ id: ID }) }, sessionsRoot: 'C:/tmp/sessions', storageFallback: () => [] })
-  assert.equal(open.isLive(ID), true)
+  // 会话对象在内存里 ≠ 在跑：以前这条断言「有对象就算活」，导致
+  // 打开过的会话永远删不掉（真机 running=false 仍报 session-is-live）。
+  const loadedButIdle = createSessionAdapter({ registry: registry(), sessions: { get: () => ({ id: ID, running: false }) }, sessionsRoot: 'C:/tmp/sessions', storageFallback: () => [] })
+  assert.equal(loadedButIdle.isLive(ID), false, '加载了但没在跑，不该拦')
+
+  const running = createSessionAdapter({ registry: registry(), sessions: { get: () => ({ id: ID, running: true }) }, sessionsRoot: 'C:/tmp/sessions', storageFallback: () => [] })
+  assert.equal(running.isLive(ID), true, '真在跑才拒绝')
 
   const closed = createSessionAdapter({ registry: registry(), sessions: { get: () => undefined }, sessionsRoot: 'C:/tmp/sessions', storageFallback: () => [] })
   assert.equal(closed.isLive(ID), false)
