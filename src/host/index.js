@@ -21,11 +21,12 @@ import { createArchiveHttpLifecycle } from './features/archive/host-feature.js'
 import { createTokenRegistry } from './features/archive/token-route.js'
 import { createSessionAdapter, adapterIsUsable } from './features/archive/session-adapter.js'
 import { createArchiveApi } from './features/archive/service-deps.js'
+import { readTrashKeptDays } from './config.js'
 import { sweepExpiredTrash } from './features/archive/trash-sweep.js'
 import { dshHome } from './features/archive/paths.js'
 import { join } from 'node:path'
 
-export { Config, isOn, readConfig }
+export { Config, isOn, readConfig, readTrashKeptDays }
 export const name = 'dsh-toolbox'
 /**
  * This Cordis accepts the ARRAY form only: an object `{required, optional}` is
@@ -133,10 +134,15 @@ export function apply(ctx, config) {
     }
     archiveApiReason = 'ready' + (adapter.readOnly ? ' (read-only)' : '')
     try {
-      const built = createArchiveApi({ home: join(dshHome(), 'storages'), adapter })
+      const built = createArchiveApi({
+          home: join(dshHome(), 'storages'),
+          adapter,
+          // 传函数：配置改了立刻生效，不用重建服务。
+          trashKeptDays: () => readTrashKeptDays(config),
+        })
       archiveApi = built.api
       // 垃圾箱只在保留期到期后才物理清空，启动时扫一次。
-      void sweepExpiredTrash({ journal: built.deps.journal, service: built.service, ttlDays: 7 })
+      void sweepExpiredTrash({ journal: built.deps.journal, service: built.service, ttlDays: readTrashKeptDays(config) })
         .then((r) => {
           if (r && r.scanned > 0) console.info('[dsh-toolbox] 垃圾箱过期清理：扫描 ' + r.scanned + '，清空 ' + r.purged)
         })

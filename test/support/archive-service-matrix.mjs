@@ -131,6 +131,8 @@ export function makeWorld(options = {}) {
       return norm.startsWith(TRASH + '/')
     },
     maxProtected: options.maxProtected,
+    // 可以是函数：测试"配置改了立刻生效"。
+    trashKeptDays: options.trashKeptDays,
     sameVolume: () => options.sameVolume !== false,
     unarchive: (id) => {
       calls.unarchive.push(id)

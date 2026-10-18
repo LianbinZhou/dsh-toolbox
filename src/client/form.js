@@ -37,7 +37,7 @@
  */
 
 import { h, useCallback, useEffect, useState } from './runtime.js'
-import { SWITCHES } from '../shared/switches.js'
+import { SWITCHES, TRASH_KEPT_DAYS_DEFAULT, TRASH_KEPT_DAYS_OPTIONS } from '../shared/switches.js'
 import { pickForm, valuesOf, storeSwitches } from './switches.js'
 
 const SLOT = 'plugins.row.config'
@@ -115,6 +115,19 @@ function revisionOf(form) {
     /* ignore */
   }
   return undefined
+}
+
+/** 写一个非布尔设置（例如保留天数）：优先 mutate，其次 configForms.set。 */
+function writeSetting(props, ctx, key, value) {
+  const form = props && props.form
+  if (form && typeof form.mutate === 'function') {
+    return form.mutate([{ op: 'set', path: [key], value }], revisionOf(form))
+  }
+  const picked = pickForm(ctx)
+  if (picked && picked.form && typeof picked.form.set === 'function') {
+    return picked.form.set(key, value)
+  }
+  throw new Error('no writable settings form')
 }
 
 /** Write one switch through whichever source is available. */
@@ -284,6 +297,34 @@ export function createSettingsCard(ctx) {
             h('span', { style: { fontSize: '12px', opacity: 0.6 } }, entry.hint),
           ),
         ),
+      ),
+      // 回收箱保留天数：7 只是默认值，用户可以自己选。
+      h(
+        'label',
+        { style: { display: 'flex', alignItems: 'center', gap: '10px', fontSize: '13px' } },
+        h('span', null, '回收箱保留天数'),
+        h(
+          'select',
+          {
+            value: String((values && values.trashKeptDays) || TRASH_KEPT_DAYS_DEFAULT),
+            disabled: !ready,
+            onChange: (event) => {
+              const next = Number(event && event.target && event.target.value)
+              if (!Number.isFinite(next)) return
+              setError('')
+              try {
+                Promise.resolve(writeSetting(props, ctx, 'trashKeptDays', next)).then((ok) => {
+                  if (ok === false) setError('服务拒绝了这次写入，天数没有改')
+                })
+              } catch (writeError) {
+                setError('写入失败：' + String((writeError && writeError.message) || writeError))
+              }
+            },
+            style: { padding: '3px 8px', borderRadius: '6px' },
+          },
+          ...TRASH_KEPT_DAYS_OPTIONS.map((days) => h('option', { key: String(days), value: String(days) }, days + ' 天')),
+        ),
+        h('span', { style: { fontSize: '12px', opacity: 0.6 } }, '到期后自动彻底删除'),
       ),
       h(
         'div',

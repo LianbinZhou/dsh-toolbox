@@ -43,7 +43,8 @@ export function createServiceDeps({ home, adapter, maxProtected = 200, ttlDays =
   const audit = createFileAudit(join(base, 'audit.jsonl'), { maxBytes: 256 * 1024 })
 
   /** 垃圾箱保留天数：到期才由清理器物理清空。 */
-  const trashKeptDays = Number.isFinite(ttlDays) ? ttlDays : 7
+  // 可以是函数（每次读最新配置）或数值；service 会自己判断。
+  const trashKeptDays = typeof ttlDays === 'function' ? ttlDays : Number.isFinite(ttlDays) ? ttlDays : 7
 
   /**
    * 真实路径边界：解析链接后仍必须在 root 内，且候选本身不能是链接。
@@ -66,6 +67,7 @@ export function createServiceDeps({ home, adapter, maxProtected = 200, ttlDays =
   }
 
   return {
+    // 原样传下去：可能是函数，service 每次调用时现读。
     trashKeptDays,
     readArchived: () => adapter.readArchived().map(String),
     isLive: (id) => adapter.isLive(id) === true,

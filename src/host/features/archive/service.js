@@ -82,6 +82,15 @@ function withoutEntry(journal, id) {
  * @param {(step: string, id: string) => (Promise<void>|void)} [deps.beforeStep]
  */
 export function createArchiveService(deps) {
+  /**
+   * 回收箱保留天数：deps.trashKeptDays 可能是函数（每次读最新配置），也可能是数值。
+   * 非法或缺失都回落到 7 天。
+   */
+  function keptDays() {
+    const raw = typeof deps.trashKeptDays === 'function' ? deps.trashKeptDays() : deps.trashKeptDays
+    return Number.isFinite(raw) ? raw : 7
+  }
+
   /** Per-instance serialisation. Cross-instance exclusion is the claim. */
   const locks = new Map()
 
@@ -191,7 +200,7 @@ export function createArchiveService(deps) {
       removedDir: true,
       movedToTrash: true,
       recoverable: true,
-      keptDays: Number.isFinite(deps.trashKeptDays) ? deps.trashKeptDays : 7,
+      keptDays: keptDays(),
     }
   }
 
@@ -435,7 +444,7 @@ export function createArchiveService(deps) {
           return { ok: false, reason: 'journal-corrupt' }
         }
         const rows = []
-        const ttl = Number.isFinite(deps.trashKeptDays) ? deps.trashKeptDays : 7
+        const ttl = keptDays()
         for (const entry of deps.journal.read()) {
           if (!entry || (entry.phase !== 'cleaned' && entry.phase !== 'trashed')) continue
           rows.push({

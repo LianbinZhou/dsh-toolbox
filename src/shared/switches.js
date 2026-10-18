@@ -23,3 +23,13 @@ export const SWITCH_KEYS = Object.freeze(SWITCHES.map((entry) => entry.key))
 export const CLIENT_SWITCH_KEYS = Object.freeze(
   SWITCHES.filter((entry) => entry.hostOnly !== true && entry.key !== 'sessionSearch').map((entry) => entry.key),
 )
+
+/**
+ * 回收箱保留天数：**可配置**，7 只是默认值。
+ *
+ * 开源产品不能把「留几天」写死——有人想 3 天快清，有人要 30 天兜底。
+ */
+export const TRASH_KEPT_DAYS_OPTIONS = Object.freeze([3, 7, 14, 30, 60])
+export const TRASH_KEPT_DAYS_DEFAULT = 7
+export const TRASH_KEPT_DAYS_MIN = 1
+export const TRASH_KEPT_DAYS_MAX = 90

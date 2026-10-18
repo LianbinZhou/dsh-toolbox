@@ -21,6 +21,7 @@ const ALL_ON = {
   pluginZh: true,
   sessionSearch: true,
   archiveHttpApi: true,
+  trashKeptDays: 7,
 }
 
 test('the schema is a volatile root: config.get() has the values', () => {
