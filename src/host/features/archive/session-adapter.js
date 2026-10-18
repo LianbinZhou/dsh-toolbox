@@ -199,10 +199,14 @@ export function createSessionAdapter({ registry, sessions, sessionsRoot, storage
         return { ok: false, reason: 'list-failed' }
       }
       let dropped = 0
+      // dropWorkspaceRows 诊断：一次重启就能看清它为什么没摘掉行。
+      console.info('[dsh-toolbox] dropWorkspaceRows: entities=' + (Array.isArray(entities) ? entities.length : typeof entities))
       for (const entity of entities ?? []) {
         if (!entity || typeof entity.mutate !== 'function') continue
         const ids = Array.isArray(entity.sessionIds) ? entity.sessionIds : []
-        if (!ids.some((value) => canonicalSessionId(String(value)) === drop)) continue
+        const matched = ids.some((value) => canonicalSessionId(String(value)) === drop)
+        console.info('[dsh-toolbox] dropWorkspaceRows: entity=' + String(entity.id ?? entity.workspaceId ?? '?') + ' rows=' + ids.length + ' matched=' + matched + ' mutatable=' + (typeof entity.mutate === 'function'))
+        if (!matched) continue
         try {
           await entity.mutate((record) => ({
             ...record,

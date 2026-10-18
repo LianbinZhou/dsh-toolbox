@@ -222,6 +222,10 @@ export function createArchivePanel({ client, isEnabled }) {
                 phase: row.phase,
                 at: row.at,
                 keptDays: row.keptDays,
+                // 剩余天数按到期时间算：keptDays 是总期，不是剩余。
+                remainingDays: typeof row.expiresAt === 'number' && row.expiresAt > 0
+                  ? Math.max(0, Math.ceil((row.expiresAt - Date.now()) / 86400000))
+                  : row.keptDays,
               })),
               protectedCount: trashMeta.protectedCount,
               maxProtected: trashMeta.maxProtected,

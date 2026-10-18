@@ -2175,7 +2175,9 @@
               label: titles[row.id] || row.title || "会话 " + String(row.id).slice(-8),
               phase: row.phase,
               at: row.at,
-              keptDays: row.keptDays
+              keptDays: row.keptDays,
+              // 剩余天数按到期时间算：keptDays 是总期，不是剩余。
+              remainingDays: typeof row.expiresAt === "number" && row.expiresAt > 0 ? Math.max(0, Math.ceil((row.expiresAt - Date.now()) / 864e5)) : row.keptDays
             })),
             protectedCount: trashMeta.protectedCount,
             maxProtected: trashMeta.maxProtected,

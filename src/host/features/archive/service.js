@@ -195,6 +195,7 @@ export function createArchiveService(deps) {
     } catch (error) {
       failed.push('cache')
     }
+    if (failed.length > 0) console.warn('[dsh-toolbox] cleanup 未完成: ' + failed.join(', '))
     return failed
   }
 
