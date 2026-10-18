@@ -2090,6 +2090,7 @@
         const result = await client.trash();
         if (result.ok) {
           trashRows = result.rows;
+          titles = typeof client.titleMap === "function" ? await client.titleMap() : titles;
           trashMeta = { protectedCount: result.protectedCount, maxProtected: result.maxProtected, keptDays: result.keptDays };
           state = "ready";
           message = "";

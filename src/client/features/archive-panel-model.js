@@ -131,6 +131,8 @@ export function createArchivePanel({ client, isEnabled }) {
       const result = await client.trash()
       if (result.ok) {
         trashRows = result.rows
+        // 回收箱的标题也要能显示会话名，否则只剩 id 尾段。
+        titles = typeof client.titleMap === 'function' ? await client.titleMap() : titles
         trashMeta = { protectedCount: result.protectedCount, maxProtected: result.maxProtected, keptDays: result.keptDays }
         state = 'ready'
         message = ''
