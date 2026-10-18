@@ -10,6 +10,7 @@ import { readTrashKeptDays, CONFIG_DEFAULTS } from '../src/host/config.js'
 import { createArchiveService } from '../src/host/features/archive/service.js'
 import { makeWorld, ID_A } from './support/archive-service-matrix.mjs'
 import { TRASH_KEPT_DAYS_OPTIONS, TRASH_KEPT_DAYS_DEFAULT } from '../src/shared/switches.js'
+import { createArchiveApi } from '../src/host/features/archive/service-deps.js'
 
 test('天数 · 默认是 7，且写进 CONFIG_DEFAULTS', () => {
   assert.equal(TRASH_KEPT_DAYS_DEFAULT, 7)
@@ -42,4 +43,21 @@ test('天数 · 服务层每次调用都现读配置（改了立刻生效）', a
   assert.equal(service.listTrash().keptDays, 30, '配置改了，不用重建服务')
   days = 3
   assert.equal(service.listTrash().keptDays, 3)
+})
+
+test('天数 · createArchiveApi 的参数名必须对得上（ttlDays）', () => {
+  // 上一版 index.js 传的是 trashKeptDays，而 service-deps 读的是 ttlDays，
+  // 名字对不上就静默回落 7——界面改了、实际没生效。这条测试专门钉死它。
+  const fakeAdapter = {
+    readArchived: () => [],
+    isLive: () => false,
+    probe: () => ({ state: 'absent' }),
+    unarchive: () => {},
+  }
+  const built = createArchiveApi({
+    home: 'C:/tmp/toolbox-test-home',
+    adapter: fakeAdapter,
+    ttlDays: () => 14,
+  })
+  assert.equal(built.service.listTrash().keptDays, 14, 'ttlDays 必须传得到服务层')
 })

@@ -234,8 +234,10 @@ export function createDeleteHandler({ guard, onDelete, peerOf }) {
         return
       }
 
-      Promise.resolve()
-        .then(() => (typeof onDelete === 'function' ? onDelete(parsed.sessionId) : { ok: true }))
+        // title 是可选的展示信息：只接受字符串并截断，别的一律丢掉。
+        const title = typeof parsed.title === 'string' ? parsed.title.slice(0, 120) : undefined
+        Promise.resolve()
+          .then(() => (typeof onDelete === 'function' ? onDelete(parsed.sessionId, { title }) : { ok: true }))
         .then((result) => {
           const value = result && typeof result === 'object' ? result : {}
           const ok = value.ok !== false

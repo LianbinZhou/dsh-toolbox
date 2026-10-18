@@ -137,8 +137,8 @@ export function apply(ctx, config) {
       const built = createArchiveApi({
           home: join(dshHome(), 'storages'),
           adapter,
-          // 传函数：配置改了立刻生效，不用重建服务。
-          trashKeptDays: () => readTrashKeptDays(config),
+          // service-deps 内部叫 ttlDays；传函数 = 每次现读配置，改完立刻生效。
+          ttlDays: () => readTrashKeptDays(config),
         })
       archiveApi = built.api
       // 垃圾箱只在保留期到期后才物理清空，启动时扫一次。
@@ -196,10 +196,10 @@ export function apply(ctx, config) {
         // instead of pretending to delete.
         api: wantedApi,
         apiReason: () => archiveApiReason,
-        onDelete: (id) => {
+        onDelete: (id, options) => {
           const api = ensureArchiveApi()
           if (api === null) return { ok: false, status: 503, reason: 'archive-session-adapter-unavailable' }
-          const outcome = api.delete(id)
+          const outcome = api.delete(id, options)
           Promise.resolve(outcome).then((r) => {
             if (r && r.ok === false) console.warn('[dsh-toolbox] 删除被拒 ' + id + ' -> ' + r.reason + (r.status ? ' (HTTP ' + r.status + ')' : ''))
           }).catch(() => {})

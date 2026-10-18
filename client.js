@@ -2466,7 +2466,7 @@
         view.message ? h("p", { class: "dsh-toolbox-archive-note" }, view.message) : null,
         view.view === "archive" ? h("div", null, [
           view.pending ? h("div", { class: "dsh-toolbox-archive-confirm" }, [
-            h("span", null, "移入回收箱（保留 7 天，可恢复）"),
+            h("span", null, "移入回收箱（可恢复，到期自动彻底删除）"),
             h("button", { type: "button", style: dangerStyle, onClick: run(() => panel.confirmRemove()) }, "入回收箱"),
             h("button", { type: "button", onClick: () => {
               panel.cancelRemove();
