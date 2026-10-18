@@ -2386,6 +2386,26 @@
     ensureStyles();
     const client = createArchiveClient({ fetchImpl: (url, init) => fetch(url, init) });
     const panel = createArchivePanel({ client, isEnabled: archiveApiEnabled });
+    const PANEL_CSS = [
+      ".dsh-toolbox-archive{display:flex;flex-direction:column;height:100%;min-height:0;box-sizing:border-box;padding:14px;gap:10px}",
+      ".dsh-toolbox-archive header{display:flex;align-items:baseline;gap:8px;flex:0 0 auto}",
+      ".dsh-toolbox-archive-count{color:var(--dsw-alias-text-secondary,#888);font-size:12px}",
+      ".dsh-toolbox-archive-tabs{display:flex;gap:6px;flex:0 0 auto}",
+      '.dsh-toolbox-archive-tabs button[aria-pressed="true"]{background:var(--dsw-alias-bg-selected,#e8f0fe);border-color:var(--dsw-alias-border-strong,#8ab4f8);font-weight:600}',
+      ".dsh-toolbox-archive ul{flex:1 1 auto;min-height:0;overflow-y:auto;margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px}",
+      ".dsh-toolbox-archive li{display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--dsw-alias-border-1,#e3e3e3);border-radius:8px;background:var(--dsw-alias-bg-1,#fff)}",
+      ".dsh-toolbox-archive-title{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:2px}",
+      ".dsh-toolbox-archive-title strong{font-weight:600;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+      ".dsh-toolbox-archive-id{color:var(--dsw-alias-text-secondary,#999);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+      ".dsh-toolbox-archive button{flex:0 0 auto;padding:4px 10px;border:1px solid var(--dsw-alias-border-1,#d5d5d5);border-radius:6px;background:var(--dsw-alias-bg-1,#fff);color:inherit;cursor:pointer;font-size:12px;line-height:1.6}",
+      ".dsh-toolbox-archive button:hover:not(:disabled){background:var(--dsw-alias-bg-hover,#f3f3f3)}",
+      ".dsh-toolbox-archive button:disabled{opacity:.5;cursor:not-allowed}",
+      ".dsh-toolbox-archive button.danger{color:#b3261e;border-color:#b3261e}",
+      ".dsh-toolbox-archive button.danger:hover:not(:disabled){background:rgba(179,38,30,.08)}",
+      ".dsh-toolbox-archive-confirm{display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid #b3261e;border-radius:8px;background:rgba(179,38,30,.06);flex-wrap:wrap}",
+      ".dsh-toolbox-archive-empty,.dsh-toolbox-archive-note{color:var(--dsw-alias-text-secondary,#888);font-size:12px;margin:0}",
+      ".dsh-toolbox-archive-note{color:#b3261e}"
+    ].join("\n");
     function ArchiveView() {
       const [view, setView] = useState(() => panel.view());
       const [busy, setBusy] = useState(false);
@@ -2414,6 +2434,7 @@
         h("div", { class: "dsh-toolbox-archive-id" }, extra)
       ]);
       return h("div", { class: "dsh-toolbox-archive" }, [
+        h("style", null, PANEL_CSS),
         h("header", null, [
           h("strong", null, "历史归档"),
           h("span", { class: "dsh-toolbox-archive-count" }, view.view === "trash" ? "回收箱 " + (view.trash?.protectedCount ?? 0) + " / " + (view.trash?.maxProtected ?? 200) : view.rows.length === 0 ? "共 0 条" : "共 " + view.rows.length + " 条")

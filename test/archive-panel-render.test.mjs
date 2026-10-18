@@ -91,3 +91,21 @@ test('mount · 点「回收箱」会切视图并拉取列表', () => {
   assert.equal(typeof tab.props.onClick, 'function', '按钮必须接了回调')
   assert.doesNotThrow(() => tab.props.onClick())
 })
+
+
+test('mount · 渲染树里带样式，列表区域可滚动', () => {
+  const ArchiveView = mountPanel()
+  const tree = ArchiveView()
+  const styles = []
+  const walk = (node) => {
+    if (!node || typeof node !== 'object') return
+    if (Array.isArray(node)) { node.forEach(walk); return }
+    if (node.type === 'style') styles.push(texts(node).join(''))
+    if (node.children) node.children.forEach(walk)
+  }
+  walk(tree)
+  assert.equal(styles.length, 1, '必须注入一份样式')
+  assert.match(styles[0], /overflow-y:auto/, '列表必须可滚动，否则超过一屏就看不到了')
+  assert.match(styles[0], /\.dsh-toolbox-archive button/, '按钮样式要统一')
+  assert.match(styles[0], /button\.danger/, '危险按钮要单独配色')
+})
