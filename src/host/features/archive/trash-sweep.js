@@ -43,7 +43,9 @@ export async function sweepExpiredTrash({ journal, service, ttlDays = 7, now = D
 
   const cutoff = now - ttlDays * DAY
   for (const entry of entries) {
-    if (!entry || (entry.phase !== 'cleaned' && entry.phase !== 'trashed')) continue
+    // 只清 cleaned：trashed 是「已移动、清理没做完」的待办，不是垃圾。
+    // heal() 已经尽力收尾；仍停在 trashed 的说明有工作没完成，清掉会留幽灵。
+    if (!entry || entry.phase !== 'cleaned') continue
     const at = typeof entry.at === 'number' ? entry.at : NaN
     if (!Number.isFinite(at) || at > cutoff) continue
     result.scanned += 1

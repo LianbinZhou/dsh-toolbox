@@ -478,8 +478,18 @@ export function createArchiveService(deps) {
           const moved = await restoreLocked(id)
           if (!moved.ok) return moved
 
-          // 文件已经从垃圾箱放回原位，这就完成了；删除时归档标记早已清掉，
-          // 再往下检查归档集合只会把它误判成 404。
+          // 文件回来了，但归档标记不一定干净：如果当初 cleanup 失败，
+          // 状态会停在 trashed、标记还在，下次又会被当成归档会话。
+          const stillArchived = deps.readArchived().some(
+            (value) => canonicalSessionId(String(value)) === canonicalSessionId(String(id)),
+          )
+          if (stillArchived) {
+            try {
+              deps.unarchive(id)
+            } catch (error) {
+              return { ok: true, restored: true, warning: 'cleanup-pending' }
+            }
+          }
           return { ok: true, restored: true }
         }
         if (!deps.readArchived().includes(id)) {
