@@ -98,6 +98,9 @@ export function archiveOrigins(webServer) {
 
 export function apply(ctx, config) {
   let offTool
+  /** 每小时扫一次回收箱；unref，不拖住退出。 */
+  const SWEEP_INTERVAL_MS = 60 * 60 * 1000
+  let archiveSweepTimer = null
   let archiveHttp = null
   let archiveHttpApi = undefined
   /**
@@ -141,12 +144,27 @@ export function apply(ctx, config) {
           ttlDays: () => readTrashKeptDays(config),
         })
       archiveApi = built.api
-      // 垃圾箱只在保留期到期后才物理清空，启动时扫一次。
-      void sweepExpiredTrash({ journal: built.deps.journal, service: built.service, ttlDays: readTrashKeptDays(config) })
+      // 启动时扫一次；之后每小时再扫一次：运行中改短保留期也能按新期限清理。
+      // 每次 sweep 都现读配置，不用启动时的快照。
+      const sweepOnce = () =>
+        sweepExpiredTrash({
+          journal: built.deps.journal,
+          service: built.service,
+          ttlDays: readTrashKeptDays(config),
+        })
+      void sweepOnce()
         .then((r) => {
           if (r && r.scanned > 0) console.info('[dsh-toolbox] 垃圾箱过期清理：扫描 ' + r.scanned + '，清空 ' + r.purged)
         })
         .catch((error) => console.warn('[dsh-toolbox] 垃圾箱清理失败', error))
+
+      if (archiveSweepTimer === null) {
+        archiveSweepTimer = setInterval(() => {
+          void sweepOnce().catch((error) => console.warn('[dsh-toolbox] 定时清理失败', error))
+        }, SWEEP_INTERVAL_MS)
+        // 不能拖住进程退出。
+        if (typeof archiveSweepTimer.unref === 'function') archiveSweepTimer.unref()
+      }
     } catch (error) {
       archiveApiReason = 'createArchiveApi threw: ' + (error && (error.message || String(error)))
       console.error('[dsh-toolbox] building the archive service failed; the HTTP api stays off: ' + archiveApiReason, error)

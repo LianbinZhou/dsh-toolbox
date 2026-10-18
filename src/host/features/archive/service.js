@@ -154,24 +154,44 @@ export function createArchiveService(deps) {
     return true
   }
 
-  function cleanup(id) {
+  /**
+   * 清掉归档标记，两种拼写都要清，而且要 await。
+   *
+   * 之前这里没 await：HTTP 早就回 200 了，标记可能还没落盘，用户看到的就是
+   * 「删了但侧栏还在」。恢复路径也复用这个函数。
+   */
+  async function clearArchiveMarkers(id) {
     const failed = []
+    let archived = []
     try {
-      // P1-9: the archive may hold BOTH spellings. Clearing only the one in the
-      // request leaves a ghost row in list().
-      for (const spelling of spellings(id)) {
-        if (deps.readArchived().map(String).includes(spelling)) deps.unarchive(spelling)
-      }
+      archived = deps.readArchived().map(String)
     } catch (error) {
-      failed.push('unarchive')
+      return { failed: ['read-archived'] }
     }
+    for (const spelling of spellings(id)) {
+      if (!archived.includes(spelling)) continue
+      try {
+        await deps.unarchive(spelling)
+      } catch (error) {
+        failed.push('unarchive:' + spelling)
+      }
+    }
+    return { failed }
+  }
+
+  /** 删除后的账务清理：标记 + workspace 行 + projection cache，全部 await。 */
+  async function cleanup(id) {
+    const failed = []
+    const markers = await clearArchiveMarkers(id)
+    failed.push(...markers.failed)
+
     try {
-      deps.dropWorkspaceRows(id)
+      if (typeof deps.dropWorkspaceRows === 'function') await deps.dropWorkspaceRows(id)
     } catch (error) {
       failed.push('workspace')
     }
     try {
-      deps.scrubCache(id)
+      if (typeof deps.scrubCache === 'function') await deps.scrubCache(id)
     } catch (error) {
       failed.push('cache')
     }
@@ -184,7 +204,7 @@ export function createArchiveService(deps) {
     if (!entry) return { ok: true, removedDir: true }
     if (!entryIsSane(entry)) return { ok: false, status: 409, reason: 'journal-corrupt' }
 
-    const failed = cleanup(id)
+    const failed = await cleanup(id)
     if (failed.length > 0) {
       return { ok: true, removedDir: true, reason: 'cleanup-pending', warning: 'deleted with warnings' }
     }
@@ -271,7 +291,7 @@ export function createArchiveService(deps) {
         // D6: the probe takes time; the session may have been opened since the
         // check above. Cleanup must never unarchive a live session.
         if (deps.isLive(id)) return { ok: false, status: 409, reason: REASONS.LIVE }
-        const failed = cleanup(id)
+        const failed = await cleanup(id)
         return failed.length === 0
           ? { ok: true, removedDir: false, reason: REASONS.CLEANUP_ONLY }
           : { ok: true, removedDir: false, reason: REASONS.CLEANUP_ONLY, warning: 'cleanup incomplete' }
@@ -422,8 +442,14 @@ export function createArchiveService(deps) {
     } catch (error) {
       return { ok: false, status: 500, reason: REASONS.RESTORE_FAILED }
     }
+    // 4) 文件回来了，再按快照放回原工作区与位置。
+    let reattached = false
+    if (entry.workspaceSeat && typeof deps.reattach === 'function') {
+      const placed = await deps.reattach(entry.workspaceSeat)
+      reattached = placed && placed.ok === true
+    }
     deps.journal.update((entries) => entries.filter((entry) => entry.id !== id))
-    return { ok: true, restored: true }
+    return { ok: true, restored: true, reattached }
   }
 
   /** 对外入口：校验 id、拿锁、复用无锁实现。 */
@@ -453,6 +479,8 @@ export function createArchiveService(deps) {
             phase: entry.phase,
             keptDays: ttl,
             at: typeof entry.at === 'number' ? entry.at : 0,
+            // 剩余天数必须按到期时间算：keptDays 是总期，不是剩余。
+            expiresAt: typeof entry.at === 'number' ? entry.at + ttl * 24 * 60 * 60 * 1000 : 0,
           })
         }
         const maxProtected = Number.isFinite(deps.maxProtected) ? deps.maxProtected : 200

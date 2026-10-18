@@ -101,6 +101,7 @@ export function createApiHandlers({ guard, peerOf, api }) {
             phase: row.phase,
             keptDays: row.keptDays,
             at: row.at,
+            expiresAt: row.expiresAt,
           }))
         }
         if (typeof value.protectedCount === 'number') body.protectedCount = value.protectedCount

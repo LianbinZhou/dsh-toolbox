@@ -183,8 +183,141 @@ export function createSessionAdapter({ registry, sessions, sessionsRoot, storage
     readOnly: !canUnarchive,
     // The old panel dropped workspace rows and scrubbed a projection cache. Both
     // are best-effort; the delete is already durable when they run.
-    dropWorkspaceRows: () => {},
-    scrubCache: () => {},
+    /**
+     * 把这条会话从 workspace 的成员列表里摘掉（await entity.mutate）。
+     *
+     * 侧栏的会话行来自这里，不是来自目录——目录搬走了、行还在，用户就会看到
+     * 「删了但还挂在未分组下面」。旧插件实现过，这里是照搬。
+     */
+    async dropWorkspaceRows(id) {
+      if (!hasRegistry || typeof registry.list !== 'function') return { ok: false, reason: 'no-registry' }
+      const drop = canonicalSessionId(String(id))
+      let entities
+      try {
+        entities = registry.list()
+      } catch (error) {
+        return { ok: false, reason: 'list-failed' }
+      }
+      let dropped = 0
+      for (const entity of entities ?? []) {
+        if (!entity || typeof entity.mutate !== 'function') continue
+        const ids = Array.isArray(entity.sessionIds) ? entity.sessionIds : []
+        if (!ids.some((value) => canonicalSessionId(String(value)) === drop)) continue
+        try {
+          await entity.mutate((record) => ({
+            ...record,
+            sessionIds: (record.sessionIds ?? []).filter((value) => canonicalSessionId(String(value)) !== drop),
+          }))
+          dropped += 1
+        } catch (error) {
+          /* 行是展示层：存储已经没了，这里失败不该让删除回滚 */
+        }
+      }
+      return { ok: true, dropped }
+    },
+
+    /**
+     * 清理 projection cache（session_projcache.json 的 tables.sessions + 每会话文件）。
+     * 两种拼写都删。
+     */
+    scrubCache(id) {
+      const home = dshHome()
+      const spellings = [String(id), String(id).replace(/^session-/, '')]
+      let touched = 0
+      try {
+        const indexPath = join(home, 'storages', 'session_projcache.json')
+        if (existsSync(indexPath)) {
+          const parsed = JSON.parse(readFileSync(indexPath, 'utf8'))
+          const sessions = parsed && parsed.tables && parsed.tables.sessions
+          if (sessions && typeof sessions === 'object') {
+            let changed = false
+            for (const key of spellings) {
+              if (Object.prototype.hasOwnProperty.call(sessions, key)) {
+                delete sessions[key]
+                changed = true
+                touched += 1
+              }
+            }
+            if (changed) writeFileSync(indexPath, JSON.stringify(parsed, null, 2), 'utf8')
+          }
+        }
+      } catch (error) {
+        /* 索引坏了就交给宿主，别在删除路径上炸 */
+      }
+      const perSessionDir = join(home, 'storages', 'session_projcache', 'sessions')
+      for (const key of spellings) {
+        try {
+          const file = join(perSessionDir, key + '.json')
+          if (existsSync(file)) {
+            unlinkSync(file)
+            touched += 1
+          }
+        } catch (error) {
+          /* 同上 */
+        }
+      }
+      return { ok: true, touched }
+    },
+
+    /**
+     * 删除前记下这条会话在工作区里的身份，恢复时才能放回原位。
+     * @returns {{workspaceId: string, sessionId: string, beforeSessionId: (string|null)}|null}
+     */
+    snapshotWorkspace(id) {
+      if (!hasRegistry || typeof registry.list !== 'function') return null
+      const target = canonicalSessionId(String(id))
+      let entities
+      try {
+        entities = registry.list()
+      } catch (error) {
+        return null
+      }
+      for (const entity of entities ?? []) {
+        if (!entity || !Array.isArray(entity.sessionIds)) continue
+        const index = entity.sessionIds.findIndex((value) => canonicalSessionId(String(value)) === target)
+        if (index < 0) continue
+        return {
+          workspaceId: String(entity.id ?? entity.workspaceId ?? ''),
+          sessionId: String(entity.sessionIds[index]),
+          beforeSessionId: index + 1 < entity.sessionIds.length ? String(entity.sessionIds[index + 1]) : null,
+        }
+      }
+      return null
+    },
+
+    /**
+     * 恢复时按快照把会话放回原来的工作区与位置。
+     */
+    async reattach(snapshot) {
+      if (!snapshot || !hasRegistry || typeof registry.list !== 'function') return { ok: false, reason: 'no-snapshot' }
+      const target = canonicalSessionId(String(snapshot.sessionId || ''))
+      let entities
+      try {
+        entities = registry.list()
+      } catch (error) {
+        return { ok: false, reason: 'list-failed' }
+      }
+      for (const entity of entities ?? []) {
+        if (!entity || typeof entity.mutate !== 'function') continue
+        if (String(entity.id ?? entity.workspaceId ?? '') !== snapshot.workspaceId) continue
+        try {
+          await entity.mutate((record) => {
+            const ids = Array.isArray(record.sessionIds) ? record.sessionIds.slice() : []
+            if (ids.some((value) => canonicalSessionId(String(value)) === target)) return record
+            const anchor = snapshot.beforeSessionId
+              ? ids.findIndex((value) => canonicalSessionId(String(value)) === canonicalSessionId(String(snapshot.beforeSessionId)))
+              : -1
+            if (anchor >= 0) ids.splice(anchor, 0, snapshot.sessionId)
+            else ids.push(snapshot.sessionId)
+            return { ...record, sessionIds: ids }
+          })
+          return { ok: true }
+        } catch (error) {
+          return { ok: false, reason: 'mutate-failed' }
+        }
+      }
+      return { ok: false, reason: 'workspace-not-found' }
+    },
   }
 }
 

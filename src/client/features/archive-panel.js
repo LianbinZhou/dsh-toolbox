@@ -204,7 +204,7 @@ function ArchiveView() {
               : null,
             h('ul', null, view.trash.rows.map((row) =>
               h('li', { key: row.id }, [
-                rowTitle(row, String(row.phase) + ' · 剩余 ' + row.keptDays + ' 天'),
+                rowTitle(row, String(row.phase) + ' · ' + (row.remainingDays === 0 ? '今天到期' : '剩余 ' + row.remainingDays + ' 天')),
                 h('button', { type: 'button', disabled: busy, onClick: run(() => panel.restoreTrash(row.id)) }, '恢复'),
                 h('button', {
                   type: 'button',

@@ -75,6 +75,9 @@ export function createServiceDeps({ home, adapter, maxProtected = 200, ttlDays =
     unarchive: (id) => adapter.unarchive(id),
     dropWorkspaceRows: (id) => adapter.dropWorkspaceRows?.(id),
     scrubCache: (id) => adapter.scrubCache?.(id),
+    snapshotWorkspace: (id) => adapter.snapshotWorkspace?.(id),
+    reattach: (snapshot) => adapter.reattach?.(snapshot),
+    scrubCache: (id) => adapter.scrubCache?.(id),
     trashRoot: () => trash,
     /** 会话目录是否仍在 sessions 根内：真实路径解析 + 链接拦截。 */
     isInsideSessions: (candidate) => realInside(sessionsRoot, candidate),

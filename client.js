@@ -2109,8 +2109,8 @@
           message = phrase(result.reason);
           return result;
         }
-        message = result.warning === "cleanup-pending" ? phrase("cleanup-pending") : "";
         await this.refreshTrash();
+        message = result.warning === "cleanup-pending" ? phrase("cleanup-pending") : "";
         return result;
       },
       /** 彻底删除：先问，再执行。 */
@@ -2504,7 +2504,7 @@
           view.trash.rows.length === 0 && !view.message ? h("p", { class: "dsh-toolbox-archive-empty" }, "回收箱是空的") : null,
           h("ul", null, view.trash.rows.map(
             (row) => h("li", { key: row.id }, [
-              rowTitle(row, String(row.phase) + " · 剩余 " + row.keptDays + " 天"),
+              rowTitle(row, String(row.phase) + " · " + (row.remainingDays === 0 ? "今天到期" : "剩余 " + row.remainingDays + " 天")),
               h("button", { type: "button", disabled: busy, onClick: run(() => panel.restoreTrash(row.id)) }, "恢复"),
               h("button", {
                 type: "button",

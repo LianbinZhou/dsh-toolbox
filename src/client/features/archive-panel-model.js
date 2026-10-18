@@ -151,8 +151,9 @@ export function createArchivePanel({ client, isEnabled }) {
         message = phrase(result.reason)
         return result
       }
-      message = result.warning === 'cleanup-pending' ? phrase('cleanup-pending') : ''
+      // 先刷新（它会把 message 清空），再把警告写回去，否则用户看不到。
       await this.refreshTrash()
+      message = result.warning === 'cleanup-pending' ? phrase('cleanup-pending') : ''
       return result
     },
 

@@ -143,3 +143,31 @@ node tools/prove-red.mjs   # 把同一套存储矩阵跑在旧实现上：应报
 ## 许可
 
 MIT
+
+
+---
+
+## 回收箱（S4）
+
+删除不是「立即消失」，而是**移入回收箱**：
+
+- 删除时只把会话目录移进私有垃圾箱，并清掉归档标记、工作区行、projection cache；
+- 回收箱在「历史归档」面板的二级页签里，**不新增侧栏入口**；
+- 保留期**可配置**：默认 **7 天**，可选 **3 / 7 / 14 / 30 / 60 天**，手动填值范围 **1–90 天**；
+- 到期后由清理器物理删除（启动时扫一次 + 每小时扫一次，每次现读配置）；
+- 恢复：把目录搬回原位，并按删除时记下的工作区成员身份放回原工作区；
+- 彻底删除：先补清账务（标记/工作区行/缓存），清不掉就拒绝，避免留下幽灵。
+
+HTTP 路由（全部要求进程内令牌 + Host 白名单 + 同源，响应只回白名单字段）：
+
+| 方法 | 路径 | 作用 |
+|---|---|---|
+| GET | `/api/archive-manager/token` | 下发进程内令牌 |
+| GET | `/api/archive-manager/list` | 列归档会话 |
+| POST | `/api/archive-manager/unarchive` | 取消归档 |
+| POST | `/api/archive-manager/delete` | 移入回收箱 |
+| GET | `/api/archive-manager/trash` | 回收箱列表（含剩余天数） |
+| POST | `/api/archive-manager/restore` | 从回收箱恢复到原位 |
+| POST | `/api/archive-manager/purge` | 彻底删除（需 `confirm: true`） |
+
+`archiveHttpApi` 开关**默认关闭**；它只在本机打开一个令牌保护的通道，响应里不含绝对路径与 nonce。
