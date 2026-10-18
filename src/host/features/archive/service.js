@@ -218,7 +218,8 @@ export function createArchiveService(deps) {
     })
   }
 
-  async function deleteSession(id) {
+  async function deleteSession(id, options) {
+      const title = options && typeof options.title === 'string' ? options.title.slice(0, 120) : undefined
     if (!isSafeSessionId(id)) return { ok: false, status: 400, reason: REASONS.INVALID_ID }
 
     return withLock(id, async () => {
@@ -437,6 +438,7 @@ export function createArchiveService(deps) {
           if (!entry || (entry.phase !== 'cleaned' && entry.phase !== 'trashed')) continue
           rows.push({
             id: String(entry.id),
+            title: typeof entry.title === 'string' ? entry.title : undefined,
             phase: entry.phase,
             keptDays: ttl,
             at: typeof entry.at === 'number' ? entry.at : 0,

@@ -97,6 +97,7 @@ export function createApiHandlers({ guard, peerOf, api }) {
         if (Array.isArray(value.rows)) {
           body.rows = value.rows.map((row) => ({
             id: row.id,
+            title: typeof row.title === 'string' ? row.title : undefined,
             phase: row.phase,
             keptDays: row.keptDays,
             at: row.at,

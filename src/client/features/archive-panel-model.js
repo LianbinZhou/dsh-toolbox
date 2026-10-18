@@ -96,9 +96,9 @@ export function createArchivePanel({ client, isEnabled }) {
     return { ok: false, reason: result.reason }
   }
 
-  async function act(kind, id) {
+  async function act(kind, id, title) {
     if (!enabled()) return { ok: false, reason: 'disabled' }
-    const result = kind === 'delete' ? await client.delete(id) : await client.unarchive(id)
+    const result = kind === 'delete' ? await client.delete(id, title) : await client.unarchive(id)
     if (!result.ok) {
       message = phrase(result.reason)
       return result
@@ -188,7 +188,7 @@ export function createArchivePanel({ client, isEnabled }) {
       const id = pending
       pending = null
       if (id === null) return { ok: false, reason: 'nothing-to-remove' }
-      return act('delete', id)
+      return act('delete', id, titles[id])
     },
     cancelRemove() {
       pending = null
@@ -206,7 +206,7 @@ export function createArchivePanel({ client, isEnabled }) {
             phase: row.phase,
             title: titles[row.id] || '',
             // A title is what a human recognises; the id tail is only a fallback.
-            label: titles[row.id] || '会话 ' + String(row.id).slice(-8),
+            label: titles[row.id] || row.title || '会话 ' + String(row.id).slice(-8),
           }),
         ),
         canDelete: enabled(),

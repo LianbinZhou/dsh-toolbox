@@ -1749,7 +1749,7 @@
       })();
       return inFlight;
     }
-    function post(sessionId, credential) {
+    function post(sessionId, credential, extra) {
       return fetchImpl(base() + DELETE_PATH, {
         method: "POST",
         headers: {
@@ -1759,7 +1759,7 @@
         },
         credentials: "same-origin",
         cache: "no-store",
-        body: JSON.stringify({ sessionId })
+        body: JSON.stringify({ sessionId, ...extra || {} })
       });
     }
     async function authorized(path, init) {
@@ -1810,7 +1810,8 @@
     }
     return {
       /** Delete one archived session. Never throws; every failure is a code. */
-      async delete(sessionId) {
+      async delete(sessionId, title) {
+        const extra = typeof title === "string" && title.length > 0 ? { title: title.slice(0, 120) } : void 0;
         if (disposed) return { ok: false, status: 0, reason: "disposed" };
         let credential;
         try {
@@ -1820,7 +1821,7 @@
         }
         let response;
         try {
-          response = await post(sessionId, credential);
+          response = await post(sessionId, credential, extra);
         } catch (error) {
           return { ok: false, status: 0, reason: "network-error" };
         }
@@ -1833,7 +1834,7 @@
             return { ok: false, status: 401, reason: "refresh-required" };
           }
           try {
-            response = await post(sessionId, fresh);
+            response = await post(sessionId, fresh, extra);
           } catch (error) {
             return { ok: false, status: 0, reason: "network-error" };
           }
@@ -2057,9 +2058,9 @@
       message = phrase(result.reason);
       return { ok: false, reason: result.reason };
     }
-    async function act(kind, id) {
+    async function act(kind, id, title) {
       if (!enabled()) return { ok: false, reason: "disabled" };
-      const result = kind === "delete" ? await client.delete(id) : await client.unarchive(id);
+      const result = kind === "delete" ? await client.delete(id, title) : await client.unarchive(id);
       if (!result.ok) {
         message = phrase(result.reason);
         return result;
@@ -2143,7 +2144,7 @@
         const id = pending;
         pending = null;
         if (id === null) return { ok: false, reason: "nothing-to-remove" };
-        return act("delete", id);
+        return act("delete", id, titles[id]);
       },
       cancelRemove() {
         pending = null;
@@ -2161,7 +2162,7 @@
               phase: row.phase,
               title: titles[row.id] || "",
               // A title is what a human recognises; the id tail is only a fallback.
-              label: titles[row.id] || "会话 " + String(row.id).slice(-8)
+              label: titles[row.id] || row.title || "会话 " + String(row.id).slice(-8)
             })
           ),
           canDelete: enabled(),

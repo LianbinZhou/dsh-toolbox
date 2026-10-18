@@ -77,7 +77,7 @@ export function createArchiveClient({ fetchImpl, base = () => '' } = {}) {
   }
 
   /** POST one delete with the current token. */
-  function post(sessionId, credential) {
+  function post(sessionId, credential, extra) {
     return fetchImpl(base() + DELETE_PATH, {
       method: 'POST',
       headers: {
@@ -87,7 +87,7 @@ export function createArchiveClient({ fetchImpl, base = () => '' } = {}) {
       },
       credentials: 'same-origin',
       cache: 'no-store',
-      body: JSON.stringify({ sessionId }),
+      body: JSON.stringify({ sessionId, ...(extra || {}) }),
     })
   }
 
@@ -145,7 +145,9 @@ export function createArchiveClient({ fetchImpl, base = () => '' } = {}) {
 
   return {
     /** Delete one archived session. Never throws; every failure is a code. */
-    async delete(sessionId) {
+    async delete(sessionId, title) {
+    // 标题一起提交：删完之后它就不在归档集合里了，靠 journal 记下来才能显示会话名。
+    const extra = typeof title === 'string' && title.length > 0 ? { title: title.slice(0, 120) } : undefined
       if (disposed) return { ok: false, status: 0, reason: 'disposed' }
       let credential
       try {
@@ -156,7 +158,7 @@ export function createArchiveClient({ fetchImpl, base = () => '' } = {}) {
 
       let response
       try {
-        response = await post(sessionId, credential)
+        response = await post(sessionId, credential, extra)
       } catch (error) {
         return { ok: false, status: 0, reason: 'network-error' }
       }
@@ -172,7 +174,7 @@ export function createArchiveClient({ fetchImpl, base = () => '' } = {}) {
           return { ok: false, status: 401, reason: 'refresh-required' }
         }
         try {
-          response = await post(sessionId, fresh)
+          response = await post(sessionId, fresh, extra)
         } catch (error) {
           return { ok: false, status: 0, reason: 'network-error' }
         }

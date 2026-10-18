@@ -124,7 +124,7 @@ export function createArchiveApi(options) {
         const result = await service.unarchiveSession(id)
         return { ok: result?.ok !== false }
       },
-      delete: (id) => service.delete(id),
+      delete: (id, options) => service.delete(id, options),
     },
   }
 }
