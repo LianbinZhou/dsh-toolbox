@@ -219,6 +219,7 @@ export function createArchiveService(deps) {
 
   async function finishInner(id) {
     const entry = findEntry(deps.journal, id)
+    console.info('[dsh-toolbox] finish(' + id + ') entry=' + (entry ? entry.phase : 'MISSING'))
     if (!entry) return { ok: true, removedDir: true }
     if (!entryIsSane(entry)) return { ok: false, status: 409, reason: 'journal-corrupt' }
 
