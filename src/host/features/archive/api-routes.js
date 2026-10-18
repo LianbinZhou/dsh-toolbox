@@ -105,6 +105,8 @@ export function createApiHandlers({ guard, peerOf, api }) {
         if (typeof value.protectedCount === 'number') body.protectedCount = value.protectedCount
         if (typeof value.keptDays === 'number') body.keptDays = value.keptDays
         if (typeof value.maxProtected === 'number') body.maxProtected = value.maxProtected
+        // 警告也是稳定码（cleanup-pending 等），同样要过共享表。
+        if (typeof value.warning === 'string') body.warning = toWireReason(value.warning)
         // 与删除同一条规则：内部码必须经过共享表，不能原样出网。
         if (!ok) body.reason = toWireReason(value.reason)
         respond(res, ok ? 200 : 409, body)

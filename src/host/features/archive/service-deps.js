@@ -16,7 +16,7 @@
  *    are refused).
  */
 
-import { existsSync, mkdirSync, renameSync, statSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, realpathSync, renameSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { createFileJournal } from './journal.js'
@@ -45,6 +45,26 @@ export function createServiceDeps({ home, adapter, maxProtected = 200, ttlDays =
   /** 垃圾箱保留天数：到期才由清理器物理清空。 */
   const trashKeptDays = Number.isFinite(ttlDays) ? ttlDays : 7
 
+  /**
+   * 真实路径边界：解析链接后仍必须在 root 内，且候选本身不能是链接。
+   * 只做 startsWith 挡不住 C:/outside 或 <root>/../outside。
+   */
+  function realInside(root, candidate) {
+    if (typeof root !== 'string' || typeof candidate !== 'string') return false
+    if (candidate.includes('..')) return false
+    try {
+      if (lstatSync(candidate).isSymbolicLink()) return false
+    } catch (error) {
+      // 路径还不存在（例如已清理）：只能做字符串层面的保守判断
+      return isInside(root, candidate)
+    }
+    try {
+      return isInside(realpathSync(root), realpathSync(candidate))
+    } catch (error) {
+      return false
+    }
+  }
+
   return {
     trashKeptDays,
     readArchived: () => adapter.readArchived().map(String),
@@ -54,10 +74,10 @@ export function createServiceDeps({ home, adapter, maxProtected = 200, ttlDays =
     dropWorkspaceRows: (id) => adapter.dropWorkspaceRows?.(id),
     scrubCache: (id) => adapter.scrubCache?.(id),
     trashRoot: () => trash,
-    /** 会话目录是否仍在 sessions 根内（真实路径边界，不是前缀比较）。 */
-    isInsideSessions: (candidate) => isInside(sessionsRoot, candidate),
-    /** 垃圾箱路径是否仍在 trash 根内。 */
-    isInsideTrash: (candidate) => isInside(trash, candidate),
+    /** 会话目录是否仍在 sessions 根内：真实路径解析 + 链接拦截。 */
+    isInsideSessions: (candidate) => realInside(sessionsRoot, candidate),
+    /** 垃圾箱路径是否仍在 trash 根内，同样做真实路径与链接检查。 */
+    isInsideTrash: (candidate) => realInside(trash, candidate),
     sameVolume(a, b) {
       try {
         const left = statSync(a, { throwIfNoEntry: false })
@@ -95,7 +115,9 @@ export function createArchiveApi(options) {
     api: {
       list: () => service.list(),
       trash: () => service.listTrash(),
-      restore: (id) => service.restore(id),
+      // 走 unarchiveSession：它会恢复文件、补清归档标记（含双拼写），
+      // 清理失败时返回 cleanup-pending 警告，而不是假装成功。
+      restore: (id) => service.unarchiveSession(id),
       purge: (id) => service.purge(id),
       debug: () => (typeof deps.shape === 'function' ? deps.shape() : { reason: 'no shape()' }),
       unarchive: async (id) => {
