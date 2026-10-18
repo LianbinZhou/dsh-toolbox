@@ -2171,7 +2171,8 @@
           trash: viewMode === "trash" ? {
             rows: trashRows.map((row) => ({
               id: row.id,
-              label: titles[row.id] || "会话 " + String(row.id).slice(-8),
+              // 标题优先：inventory 里的 → journal 里记下的 → id 尾段兜底。
+              label: titles[row.id] || row.title || "会话 " + String(row.id).slice(-8),
               phase: row.phase,
               at: row.at,
               keptDays: row.keptDays

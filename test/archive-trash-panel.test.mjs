@@ -14,7 +14,7 @@ function fakeClient(script = {}) {
     async titleMap() { return {} },
     async trash() {
       calls.trash += 1
-      return script.trash ?? { ok: true, rows: [{ id: 'session-aaaaaaaa-1111-2222-3333-444444444444', phase: 'cleaned', keptDays: 7, at: 1 }], protectedCount: 3, maxProtected: 200, keptDays: 7 }
+      return script.trash ?? { ok: true, rows: [{ id: 'session-aaaaaaaa-1111-2222-3333-444444444444', title: '清理旧安装并重装Easel', phase: 'cleaned', keptDays: 7, at: 1 }], protectedCount: 3, maxProtected: 200, keptDays: 7 }
     },
     async restoreFromTrash() { calls.restore += 1; return script.restore ?? { ok: true } },
     async purge() { calls.purge += 1; return script.purge ?? { ok: true } },
@@ -67,4 +67,13 @@ test('页签 · 恢复后会刷新回收箱列表', async () => {
   await panel.restoreTrash('session-aaaaaaaa-1111-2222-3333-444444444444')
   assert.equal(client.calls.restore, 1)
   assert.equal(client.calls.trash, before + 1, '恢复后列表要重新拉')
+})
+
+test('页签 · 回收箱行显示 journal 里的会话名，不是 id 尾段', async () => {
+  const client = fakeClient()
+  const panel = createArchivePanel({ client, isEnabled: () => true })
+  await panel.refreshTrash()
+  const row = panel.view().trash.rows[0]
+  assert.equal(row.label, '清理旧安装并重装Easel', '必须用 journal 里的标题')
+  assert.equal(/^会话 [0-9a-f]{8}$/.test(row.label), false, '不能退化成 id 尾段')
 })
