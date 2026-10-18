@@ -190,7 +190,9 @@ export function createSessionAdapter({ registry, sessions, sessionsRoot, storage
      * 「删了但还挂在未分组下面」。旧插件实现过，这里是照搬。
      */
     async dropWorkspaceRows(id, seat) {
-      if (!hasRegistry || typeof registry.list !== 'function') return { ok: false, reason: 'no-registry' }
+      // 没有 registry 时确实无法摘行，但也不能把删除卡在 trashed：
+      // 没有工作区服务 = 没有行可摘，按「本来就干净」处理。
+      if (!hasRegistry || typeof registry.list !== 'function') return { ok: true, dropped: 0, already: true, reason: 'no-registry' }
       const drop = canonicalSessionId(String(id))
       // 快照优先：移动之后 entity.sessionIds 是 filtered getter，目录不在了它既可能
       // 返回空、也可能直接抛；seat 是删除前记下的，永远有效。
@@ -276,6 +278,13 @@ export function createSessionAdapter({ registry, sessions, sessionsRoot, storage
         }
         dropped += 1
         console.info('[dsh-toolbox] detachSession ok entity=' + entityKey + ' id=' + realId + ' (' + before + '→' + after.length + ')')
+      }
+
+      // 没有快照、而且没有任何工作区包含这一行：这就是「未分组」会话。
+      // 它本来就不在 workspace 里，没有行可摘 = 本来就干净，绝不能判成失败
+      // （以前这里返回 not-found，cleanup 停在 trashed，侧栏那条永远不消失）。
+      if (dropped === 0 && !already && targetWorkspace === null) {
+        return { ok: true, dropped: 0, already: true, reason: 'ungrouped' }
       }
 
       if (dropped === 0 && !already) {
@@ -418,7 +427,9 @@ export function createSessionAdapter({ registry, sessions, sessionsRoot, storage
 
         return fallbackMutate(entity, before, sessionId, target)
       }
-      return { ok: false, reason: 'workspace-not-found' }
+      // 「未分组」的会话不属于任何工作区实体：没有行可摘 = 本来就干净。
+      // 以前这里返回失败，导致 cleanup 停在 trashed、侧栏那条永远不消失。
+      return { ok: true, dropped: 0, already: true }
     },
   }
 }

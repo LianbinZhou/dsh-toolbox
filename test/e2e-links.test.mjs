@@ -273,3 +273,43 @@ test('链路 7 · 幽灵态下的彻底删除：不留任何标记', async () =>
     w.cleanup()
   }
 })
+
+
+test('链路 9 · 未分组会话：归档 → 删除，收尾必须成功（不能停在 trashed）', async () => {
+  const w = makeWorld()
+  try {
+    // 「未分组」= 磁盘上有目录，但不属于任何工作区实体。
+    w.entity.record.sessionIds = w.entity.record.sessionIds.filter((id) => id !== w.sessionId)
+    assert.equal(w.state().workspaceRows.includes(w.sessionId), false, '前提：这条确实不在任何工作区里')
+
+    await w.registry.archiveSession(w.sessionId)
+    const removed = await w.service.delete(w.sessionId, { title: '未分组会话' })
+
+    assert.equal(removed.ok, true, '删除本身要成功')
+    const s = w.state()
+    assert.equal(s.phase, 'cleaned', '未分组会话没有行可摘，cleanup 不能因此判失败')
+    assert.equal(s.dirInPlace, false, '目录必须离开原位（侧栏是从磁盘发现未分组会话的）')
+    assert.equal(s.dirInTrash, true)
+    assert.equal(s.archived.includes(w.sessionId), false, '归档标记要清掉')
+    assert.equal(s.entries.filter((entry) => entry.id === w.sessionId).length, 1)
+  } finally {
+    w.cleanup()
+  }
+})
+
+test('链路 10 · 未分组会话：删除后恢复，回到未分组（而不是报错或造行）', async () => {
+  const w = makeWorld()
+  try {
+    w.entity.record.sessionIds = w.entity.record.sessionIds.filter((id) => id !== w.sessionId)
+    await w.registry.archiveSession(w.sessionId)
+    await w.service.delete(w.sessionId)
+
+    const back = await w.service.unarchiveSession(w.sessionId)
+    assert.equal(back.ok, true, '恢复文件本身应成功')
+    // 未分组会话没有 seat：文件回到磁盘，侧栏会把它重新算进未分组，不能硬塞进某个工作区。
+    assert.equal(w.state().dirInPlace, true, '目录必须回到原位')
+    assert.equal(w.state().workspaceRows.includes(w.sessionId), false, '不能凭空塞进工作区')
+  } finally {
+    w.cleanup()
+  }
+})
