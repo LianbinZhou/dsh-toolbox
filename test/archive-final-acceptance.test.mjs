@@ -45,7 +45,7 @@ test('the real ids survive the whole delete path (cleanup-only for the ghosts)',
   const ghostResult = await service.delete(ghost)
   assert.equal(ghostResult.ok, true, 'a ghost must be cleanable, not stuck')
   assert.equal(ghostResult.reason, REASONS.CLEANUP_ONLY)
-  assert.equal(world.isArchived(ghost), false, 'its marker is gone')
+  assert.equal(world.isArchived(ghost), true, 'the marker survives a delete (purge is what clears it)')
 })
 
 test('no real id is rejected as invalid on the way through the service', async () => {

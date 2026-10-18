@@ -124,7 +124,7 @@ test('api · unarchive clears the flag', async () => {
     const value = await tokenOf(world)
     const res = await fetch(world.origin + UNARCHIVE_PATH, { method: 'POST', headers: world.headers(value), body: JSON.stringify({ sessionId: ID }) })
     assert.equal(res.status, 200)
-    assert.equal(world.archived.has(ID), false)
+    assert.equal(world.archived.has(ID), false, 'unarchive clears the marker')
   } finally {
     await close(world)
   }

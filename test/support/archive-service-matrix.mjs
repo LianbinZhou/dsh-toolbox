@@ -234,7 +234,9 @@ export const SERVICE_CASES = [
       const service = createService(deps)
       const result = await service.delete(ID_A)
       assert.equal(result.ok, true, 'absent + archived is the cleanup-only case')
-      assert.equal(world.isArchived(ID_A), false)
+      // 删除**保留**归档标记：清掉它等于 unarchive，会话会以「未分组」身份
+      // 回到侧栏，而文件已经在回收箱里——用户看到两份幽灵。
+      assert.equal(world.isArchived(ID_A), true, 'the archive marker must survive the delete')
     },
   },
 
@@ -490,7 +492,8 @@ export const SERVICE_CASES = [
       assert.equal(second.ok, false)
       assert.ok(['already-deleted', 'not-archived'].includes(second.reason), 'got ' + second.reason)
       assert.equal(world.calls.rename.length, 1)
-      assert.equal(world.calls.unarchive.length, 1)
+      // 删除不再调 unarchive（见 D1c 的注释）：标记留着，侧栏才不多出一行。
+      assert.equal(world.calls.unarchive.length, 0, 'delete must not unarchive')
     },
   },
   {

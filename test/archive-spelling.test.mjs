@@ -42,5 +42,6 @@ test('拼写 · 收尾后归档集合里两种拼写都被清掉', async () => {
 
   await service.delete(ID_A)
   const left = [...world.archived].filter((value) => value === ID_A || value === BARE)
-  assert.deepEqual(left, [], '两种拼写都不能留在归档集合里')
+  // 删除保留标记（purge/restore 才清）：清掉会让会话以「未分组」回到侧栏。
+  assert.equal(left.length, 2, '两种拼写都留在归档集合里')
 })

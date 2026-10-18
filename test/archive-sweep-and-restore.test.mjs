@@ -15,7 +15,7 @@ import { makeWorld, ID_A } from './support/archive-service-matrix.mjs'
 const TRASH = 'C:/home/storages/archive-trash'
 
 test('4.4 · cleanup 失败后恢复，归档标记必须被补清', async () => {
-  const { deps, world } = makeWorld({ failAt: { step: 'unarchive' } })
+  const { deps, world } = makeWorld({ failAt: { step: 'workspace', error: new Error('down') } })
   const service = createArchiveService(deps)
 
   const removed = await service.delete(ID_A)
@@ -35,7 +35,7 @@ test('4.4 · cleanup 失败后恢复，归档标记必须被补清', async () =>
 
 test('4.3 · trashed 超过保留期也不许物理清空', async () => {
   const old = { id: ID_A, nonce: 'n1', phase: 'trashed', originalPath: 'C:/home/sessions/projA/' + ID_A, trashPath: TRASH + '/n1', dev: 1, ino: 1, at: 1 }
-  const { deps, world } = makeWorld({ journal: [old], failAt: { step: 'unarchive' } })
+  const { deps, world } = makeWorld({ journal: [old], failAt: { step: 'workspace', error: new Error('down') } })
   world.trash.set(TRASH + '/n1', ID_A)
   const service = createArchiveService(deps)
 

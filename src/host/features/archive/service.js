@@ -182,9 +182,10 @@ export function createArchiveService(deps) {
   /** 删除后的账务清理：标记 + workspace 行 + projection cache，全部 await。 */
   async function cleanup(id, seat) {
     const failed = []
-    const markers = await clearArchiveMarkers(id)
-    failed.push(...markers.failed)
-
+    // 删除路径**不满掉归档标记**。clearArchiveMarkers 会 unarchive，会话就从
+    // 「归档」变回「未归档」——侧栏立刻把它列进未分组，而文件已经在回收箱里了：
+    // 用户看到的就是「回收箱有一份、侧栏又冒出来一份」（2026-10-18 真机现场）。
+    // 标记只由 purge（彻底删除）或 restore（恢复）来清。
     if (typeof deps.dropWorkspaceRows === 'function') {
       try {
         const result = await deps.dropWorkspaceRows(id, seat)
@@ -307,6 +308,12 @@ export function createArchiveService(deps) {
         deps.removeTree(entry.trashPath)
       } catch (error) {
         if (!(error && error.code === 'ENOENT')) return { ok: false, status: 500, reason: 'purge-failed' }
+      }
+      // 文件真的没了，这时候才清归档标记：删路径时不清是为了让侧栏闭嘴，
+      // 彻底删完还留着标记，归档集合里就会永远挂一个不存在的 id。
+      const cleared = await clearArchiveMarkers(id)
+      if (cleared.failed.length > 0) {
+        console.warn('[dsh-toolbox] purge: 文件已删，归档标记未清干净 ' + id + ': ' + cleared.failed.join(','))
       }
       deps.journal.update((entries) => entries.filter((current) => current.id !== id))
       return { ok: true, purged: true }
@@ -593,8 +600,11 @@ export function createArchiveService(deps) {
       for (const raw of deps.readArchived()) {
         const canonical = canonicalSessionId(String(raw))
         if (canonical === '' || seen.has(canonical)) continue
-        seen.add(canonical)
         const entry = findEntry(deps.journal, String(raw))
+        // 回收箱里的条目不算「归档」：用户已经从归档页删掉它了，只是还能恢复。
+        // 不过滤的话，删掉的会话会同时出现在归档页和回收箱两个页签里。
+        if (entry && (entry.phase === 'trashed' || entry.phase === 'cleaned')) continue
+        seen.add(canonical)
         rows.push({ id: String(raw), phase: entry ? entry.phase : 'archived' })
       }
       return { ok: true, rows }

@@ -56,8 +56,8 @@ test('crash 2 · the directory moved but the journal was not updated: adopt and 
   assert.deepEqual(result.pending, [], 'the restart finishes the job')
   assert.deepEqual(service.pendingCleanup(), [], 'no entry is left behind')
   assert.equal(world.trashCount(), 1, '删除只移入垃圾箱：保留期没到之前不许物理清空')
-  assert.equal(world.isArchived(ID_A), false, 'the archive marker is cleared')
-  assert.equal(world.calls.unarchive.length, 1, 'the bookkeeping ran exactly once')
+  assert.equal(world.isArchived(ID_A), true, 'the archive marker survives: clearing it puts the session back in the sidebar')
+  assert.equal(world.calls.unarchive.length, 0, 'delete must not unarchive')
 })
 
 test('crash 3 · trashed, unarchive not run: the restart finishes the bookkeeping', async () => {
@@ -68,7 +68,7 @@ test('crash 3 · trashed, unarchive not run: the restart finishes the bookkeepin
   const service = createArchiveService(deps)
   await service.heal()
 
-  assert.equal(world.isArchived(ID_A), false, 'the marker is cleared by the restart')
+  assert.equal(world.isArchived(ID_A), true, 'the marker survives the restart too')
   assert.equal(world.trashCount(), 1, '仍在垃圾箱里等保留期')
   assert.deepEqual(service.pendingCleanup(), [])
 })

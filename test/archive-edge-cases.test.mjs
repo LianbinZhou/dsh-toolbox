@@ -106,7 +106,7 @@ test('R4-8 · junk elements in the archived set neither crash nor cause a wrong 
   const result = await service.delete(ID_A)
   assert.equal(result.ok, true, 'the valid id is still deletable')
   assert.equal(world.dirExists(ID_A), false)
-  assert.equal(world.calls.unarchive.length, 1, 'exactly one marker was cleared')
+  assert.equal(world.calls.unarchive.length, 0, 'delete must not unarchive')
 })
 
 test('R4-8 · a junk id can never become a filesystem request', async () => {
