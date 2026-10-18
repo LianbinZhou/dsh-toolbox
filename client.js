@@ -1906,23 +1906,70 @@
     };
   }
 
+  // src/shared/reasons.js
+  var REASON_MAP = Object.freeze({
+    // —— 参数与状态 ——
+    "invalid-id": { wire: "invalid-id", text: "会话 id 不合法" },
+    "not-archived": { wire: "not-archived", text: "这个会话已经不在归档列表里了" },
+    "no-longer-archived": { wire: "not-archived", text: "已经不在归档列表" },
+    "dir-absent": { wire: "dir-absent", text: "会话目录已经不在了" },
+    "already-deleted": { wire: "already-deleted", text: "这个会话已经删过了" },
+    "delete-in-progress": { wire: "in-progress", text: "这个会话正在删除中" },
+    // —— 存活与身份 ——
+    "session-is-live": { wire: "live", text: "这个会话正在使用中，不能删除" },
+    "session-became-live": { wire: "live", text: "会话刚被打开，已取消删除" },
+    "identity-changed": { wire: "identity-changed", text: "会话目录已变化，已拒绝" },
+    // —— 路径与磁盘 ——
+    "unsafe-path": { wire: "unsafe-path", text: "路径不安全，已拒绝" },
+    "unsafe-trash-root": { wire: "unsafe-path", text: "回收站位置不安全，已拒绝执行" },
+    "cross-volume-trash": { wire: "cross-device", text: "回收箱和会话不在同一个磁盘，无法原子移动" },
+    // —— 执行失败 ——
+    "probe-failed": { wire: "probe-failed", text: "检查会话目录时出错" },
+    "claim-failed": { wire: "claim-failed", text: "删除声明写入失败" },
+    "move-failed": { wire: "remove-failed", text: "移入回收箱失败" },
+    "restore-failed": { wire: "restore-failed", text: "恢复失败" },
+    "purge-failed": { wire: "purge-failed", text: "彻底删除失败" },
+    // —— 回收箱 ——
+    "cleanup-only": { wire: "cleanup-only", text: "目录已不在，只做了清理" },
+    "cleanup-pending": { wire: "cleanup-pending", text: "已移入回收箱，但归档标记清理未完成" },
+    "journal-corrupt": { wire: "journal-corrupt", text: "回收站状态文件损坏，已停止删除（请人工检查）" },
+    "trash-full": { wire: "trash-full", text: "回收箱已满（上限 200）：请先恢复或彻底删除，再继续" },
+    "no-entry": { wire: "no-entry", text: "没有这条记录" },
+    "not-in-trash": { wire: "not-in-trash", text: "这条不在回收箱里" },
+    "confirm-required": { wire: "confirm-required", text: "彻底删除需要二次确认" },
+    // —— 兜底 ——
+    "request-failed": { wire: "request-failed", text: "操作失败" }
+  });
+  var WIRE_REASONS = Object.freeze(new Set(Object.values(REASON_MAP).map((entry) => entry.wire)));
+  function reasonText(reason) {
+    if (typeof reason === "string") {
+      const entry = REASON_MAP[reason];
+      if (entry) return entry.text;
+      for (const candidate of Object.values(REASON_MAP)) {
+        if (candidate.wire === reason) return candidate.text;
+      }
+    }
+    return REASON_MAP["request-failed"].text;
+  }
+  var INTERNAL_REASONS = Object.freeze(Object.keys(REASON_MAP));
+
   // src/client/features/archive-panel-model.js
-  var REASON_TEXT = Object.freeze({
+  var CLIENT_REASON_TEXT = Object.freeze({
     "refresh-required": "需要刷新页面（凭证已失效）",
     "token-unavailable": "拿不到凭证：请确认第 7 个开关已开启，然后刷新页面",
     "network-error": "网络错误：宿主可能正在重启",
     disposed: "面板已卸载，请刷新页面",
     "archive-session-adapter-unavailable": "宿主还没接上会话服务，归档接口暂不可用",
-    live: "这个会话正在使用中，不能删除",
-    "not-archived": "这个会话已经不在归档列表里了",
-    "trash-full": "回收站已满：请先恢复或清理，再删除",
-    "journal-corrupt": "回收站状态文件损坏，已停止删除（请人工检查）",
-    "cross-device": "回收站和会话不在同一个磁盘，无法原子移动",
-    "unsafe-trash-root": "回收站位置不安全，已拒绝执行",
-    "claim-failed": "删除声明写入失败",
     "http-404": "接口没有注册：请打开第 7 个开关",
     "http-503": "服务未就绪"
   });
+  var REASON_TEXT = Object.freeze({
+    ...Object.fromEntries(Object.entries(CLIENT_REASON_TEXT))
+  });
+  function reasonTextFor(reason) {
+    if (typeof reason === "string" && CLIENT_REASON_TEXT[reason]) return CLIENT_REASON_TEXT[reason];
+    return reasonText(reason);
+  }
   function createArchivePanel({ client, isEnabled }) {
     let rows = [];
     let titles = {};
@@ -1937,7 +1984,7 @@
       }
     };
     function phrase(reason) {
-      return REASON_TEXT[reason] ?? "操作失败：" + String(reason ?? "unknown");
+      return reasonTextFor(reason);
     }
     async function refresh() {
       if (!enabled()) {

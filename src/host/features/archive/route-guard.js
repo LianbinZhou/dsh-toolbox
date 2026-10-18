@@ -26,6 +26,7 @@
 import { randomBytes } from 'node:crypto'
 import { createServer } from 'node:http'
 import { isSafeSessionId } from './paths.js'
+import { WIRE_REASONS, toWireReason } from '../../../shared/reasons.js'
 import { sameToken } from './token-route.js'
 
 export const DELETE_PATH = '/api/archive-manager/delete'
@@ -38,29 +39,11 @@ export const MAX_BODY_BYTES = 64 * 1024
  * 这样服务层的错误原文（可能带绝对路径、异常消息）不会顺着网线跑出去，
  * 而前端又能拿到具体原因显示成中文。
  */
-export const PUBLIC_REASONS = Object.freeze(
-  new Set([
-    'live',
-    'not-archived',
-    'invalid-id',
-    'in-progress',
-    'already-deleted',
-    'trash-full',
-    'journal-corrupt',
-    'cross-device',
-    'unsafe-trash-root',
-    'claim-failed',
-    'probe-failed',
-    'remove-failed',
-    'restore-failed',
-    'cleanup-pending',
-  ]),
-)
+/** 兼容旧名字：白名单现在由共享表生成。 */
+export const PUBLIC_REASONS = WIRE_REASONS
 
-/** 把一个原因码变成可以出网的值。 */
-export function publicReason(reason) {
-  return typeof reason === 'string' && PUBLIC_REASONS.has(reason) ? reason : 'request-failed'
-}
+/** 兼容旧名字：内部码 → 出网码。 */
+export const publicReason = toWireReason
 /** Forces a preflight; it is NOT a credential. */
 export const CSRF_HEADER = 'x-dsh-toolbox'
 export const CSRF_VALUE = '1'

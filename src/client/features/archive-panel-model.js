@@ -19,22 +19,29 @@
  */
 
 /** The user-facing text for each refusal reason. One place, no scattered strings. */
-export const REASON_TEXT = Object.freeze({
+/** 只有客户端自己会产生的码；服务层的原因码一律走共享表。 */
+import { reasonText as sharedReasonText } from '../../shared/reasons.js'
+
+const CLIENT_REASON_TEXT = Object.freeze({
   'refresh-required': '需要刷新页面（凭证已失效）',
   'token-unavailable': '拿不到凭证：请确认第 7 个开关已开启，然后刷新页面',
   'network-error': '网络错误：宿主可能正在重启',
   disposed: '面板已卸载，请刷新页面',
   'archive-session-adapter-unavailable': '宿主还没接上会话服务，归档接口暂不可用',
-  live: '这个会话正在使用中，不能删除',
-  'not-archived': '这个会话已经不在归档列表里了',
-  'trash-full': '回收站已满：请先恢复或清理，再删除',
-  'journal-corrupt': '回收站状态文件损坏，已停止删除（请人工检查）',
-  'cross-device': '回收站和会话不在同一个磁盘，无法原子移动',
-  'unsafe-trash-root': '回收站位置不安全，已拒绝执行',
-  'claim-failed': '删除声明写入失败',
   'http-404': '接口没有注册：请打开第 7 个开关',
   'http-503': '服务未就绪',
 })
+
+/** 兼容旧引用的合并表（客户端码优先，其余来自共享表）。 */
+export const REASON_TEXT = Object.freeze({
+  ...Object.fromEntries(Object.entries(CLIENT_REASON_TEXT)),
+})
+
+/** 唯一入口：先认客户端码，再交给共享表。 */
+export function reasonTextFor(reason) {
+  if (typeof reason === 'string' && CLIENT_REASON_TEXT[reason]) return CLIENT_REASON_TEXT[reason]
+  return sharedReasonText(reason)
+}
 
 /**
  * @param {object} options
@@ -58,7 +65,7 @@ export function createArchivePanel({ client, isEnabled }) {
   }
 
   function phrase(reason) {
-    return REASON_TEXT[reason] ?? '操作失败：' + String(reason ?? 'unknown')
+    return reasonTextFor(reason)
   }
 
   /** Load the list. Makes no request when the switch is off. */

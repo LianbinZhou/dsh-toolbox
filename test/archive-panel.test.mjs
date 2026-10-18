@@ -74,10 +74,11 @@ test('panel · an unmounted route points at the switch', async () => {
 
 test('panel · the service reasons are phrased per case', async () => {
   const cases = [
+    ['session-is-live', /正在使用中/],
     ['live', /正在使用中/],
-    ['trash-full', /回收站已满/],
+    ['trash-full', /回收站已满|回收箱已满/],
     ['journal-corrupt', /损坏/],
-    ['not-archived', /已经不在归档列表/],
+    ['no-longer-archived', /归档/],
     ['archive-session-adapter-unavailable', /还没接上会话服务/],
   ]
   for (const [reason, pattern] of cases) {
