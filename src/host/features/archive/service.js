@@ -307,6 +307,8 @@ export function createArchiveService(deps) {
         ino: probe.identity?.ino,
         realpath: probe.identity?.realpath,
         at: Date.now(),
+        // 记下标题：删完就不在归档集合里了，这是回收箱显示会话名的唯一来源。
+        ...(title ? { title } : {}),
       }
       try {
         deps.journal.update((entries) => [...entries.filter((entry) => entry.id !== id), claim])
