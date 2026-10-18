@@ -134,7 +134,7 @@ test('the factory takes React from the loader exactly once and returns a plugin'
     throw new Error('unexpected require: ' + specifier)
   })
   assert.deepEqual(seen, ['react'], 'the loader is asked for react exactly once')
-  assert.deepEqual(Array.from(plugin.inject), ['slots', 'locale'])
+  assert.deepEqual(Array.from(plugin.inject), ['slots', 'locale', 'sessions'], 'sessions 用于删除后刷新 DSH 会话列表')
   assert.equal(typeof plugin.apply, 'function')
 })
 

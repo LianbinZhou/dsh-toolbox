@@ -2378,6 +2378,18 @@
       return false;
     }
   }
+  async function refreshHostSessionsOf(ctx) {
+    try {
+      const sessions = ctx.sessions ?? (typeof ctx.get === "function" ? ctx.get("sessions") : void 0);
+      if (sessions && typeof sessions.refresh === "function") {
+        await sessions.refresh();
+        return true;
+      }
+    } catch (error) {
+      console.warn("[dsh-toolbox] sessions.refresh 失败（侧栏可能要手动刷新）", error);
+    }
+    return false;
+  }
   function mount4(ctx, env) {
     if (!ctx.slots || typeof ctx.slots.register !== "function" || typeof ctx.slots.inject !== "function") {
       throw new Error("dsh-toolbox: the slots service is unavailable");
@@ -2425,11 +2437,13 @@
           live = false;
         };
       }, []);
+      const refreshHostSessions = () => refreshHostSessionsOf(ctx);
       const run = (action) => async () => {
         setBusy(true);
         try {
           await action();
         } finally {
+          await refreshHostSessions();
           sync();
           setBusy(false);
         }
@@ -2980,7 +2994,7 @@
     factory(load) {
       installRuntime(load("react"));
       return {
-        inject: ["slots", "locale"],
+        inject: ["slots", "locale", "sessions"],
         apply
       };
     }

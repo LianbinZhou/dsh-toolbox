@@ -70,6 +70,25 @@ export function archiveApiEnabled() {
   }
 }
 
+/**
+ * 让 DSH 自己的会话列表重新拉一次。
+ *
+ * 「未分组」不是 workspace 表算出来的：它是 sessions.list 减去各工作区成员。
+ * 删掉目录只改了磁盘，Session 列表还是旧快照——不刷这一步，侧栏那一行就永远在。
+ */
+export async function refreshHostSessionsOf(ctx) {
+  try {
+    const sessions = ctx.sessions ?? (typeof ctx.get === 'function' ? ctx.get('sessions') : undefined)
+    if (sessions && typeof sessions.refresh === 'function') {
+      await sessions.refresh()
+      return true
+    }
+  } catch (error) {
+    console.warn('[dsh-toolbox] sessions.refresh 失败（侧栏可能要手动刷新）', error)
+  }
+  return false
+}
+
 export function mount(ctx, env) {
   if (!ctx.slots || typeof ctx.slots.register !== 'function' || typeof ctx.slots.inject !== 'function') {
     throw new Error('dsh-toolbox: the slots service is unavailable')
@@ -121,11 +140,15 @@ function ArchiveView() {
       return () => { live = false }
     }, [])
 
+    const refreshHostSessions = () => refreshHostSessionsOf(ctx)
+
     const run = (action) => async () => {
       setBusy(true)
       try {
         await action()
       } finally {
+        // 删除/恢复/彻底删除都走这里，所以刷新覆盖全部动作。
+        await refreshHostSessions()
         sync()
         setBusy(false)
       }

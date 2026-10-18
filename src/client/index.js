@@ -80,7 +80,7 @@ window.__ModuleLoader__.load({
   factory(load) {
     installRuntime(load('react'))
     return {
-      inject: ['slots', 'locale'],
+      inject: ['slots', 'locale', 'sessions'],
       apply,
     }
   },

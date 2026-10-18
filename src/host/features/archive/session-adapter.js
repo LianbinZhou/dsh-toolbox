@@ -327,6 +327,7 @@ export function createSessionAdapter({ registry, sessions, sessionsRoot, storage
         /* 索引坏了就交给宿主，别在删除路径上炸 */
       }
       const perSessionDir = join(home, 'storages', 'session_projcache', 'sessions')
+      const failures = []
       for (const key of spellings) {
         try {
           const file = join(perSessionDir, key + '.json')
@@ -335,10 +336,12 @@ export function createSessionAdapter({ registry, sessions, sessionsRoot, storage
             touched += 1
           }
         } catch (error) {
-          /* 同上 */
+          // Windows 上文件被占用（EBUSY/EPERM）会走到这里：不能当成功。
+          failures.push(key + ':' + String((error && error.code) || error))
         }
       }
-      return { ok: true, touched }
+      if (failures.length > 0) console.warn('[dsh-toolbox] scrubCache 未删净: ' + failures.join(', '))
+      return { ok: failures.length === 0, touched, failed: failures }
     },
 
     /**
