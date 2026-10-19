@@ -500,6 +500,11 @@ export function createArchiveService(deps) {
         healed.push(entry.id)
         continue
       }
+      // cleaned 且没有 lastError = 终态：cleanup 已经成功过。
+      // 以前这里也走 finish，于是每次 heal 都把同一批记录重新 detach 一遍——
+      // 真机日志里那串 (60→60)/(59→59) 就是它：行早就不在了，流程还在空转。
+      // 只有带 lastError 的 cleaned（上次清理没做完）才值得重试。
+      if (entry.phase === 'cleaned' && !entry.lastError) continue
       await withLock(entry.id, async () => {
         const result = await finish(entry.id)
         if (result.ok && !result.warning) healed.push(entry.id)

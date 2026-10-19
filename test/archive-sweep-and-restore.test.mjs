@@ -58,3 +58,28 @@ test('4.3 · cleaned 超过保留期照常清空', async () => {
   assert.equal(result.purged, 1, 'cleaned 到期就该清')
   assert.equal(world.trash.has(TRASH + '/n1'), false)
 })
+
+
+test('heal · cleaned 且无 lastError 是终态，绝不重试（防空转）', async () => {
+  const done = { id: ID_A, nonce: 'n1', phase: 'cleaned', originalPath: 'C:/home/sessions/projA/' + ID_A, trashPath: TRASH + '/n1', dev: 1, ino: 1, at: 1 }
+  const { deps, world } = makeWorld({ journal: [done] })
+  world.trash.set(TRASH + '/n1', ID_A)
+  const service = createArchiveService(deps)
+
+  const result = await service.heal()
+  assert.equal(result.ok, true)
+  assert.equal(world.calls.workspace.length, 0, '终态记录不许再 detach 一次（真机那串 60→60 就是空转）')
+  assert.equal(world.calls.unarchive.length, 0, '也不许再清标记')
+  assert.equal(world.journalEntries()[0].phase, 'cleaned', '状态不变')
+})
+
+test('heal · 带 lastError 的 cleaned 仍要重试（上次没清完）', async () => {
+  const stuck = { id: ID_A, nonce: 'n1', phase: 'cleaned', originalPath: 'C:/home/sessions/projA/' + ID_A, trashPath: TRASH + '/n1', dev: 1, ino: 1, at: 1, lastError: 'workspace:not-found' }
+  const { deps, world } = makeWorld({ journal: [stuck] })
+  world.trash.set(TRASH + '/n1', ID_A)
+  world.archived.add(ID_A)
+  const service = createArchiveService(deps)
+
+  await service.heal()
+  assert.ok(world.calls.workspace.length > 0, '带 lastError 的必须重试')
+})
