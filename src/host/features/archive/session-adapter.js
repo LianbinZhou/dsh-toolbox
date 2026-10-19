@@ -16,7 +16,7 @@
  *     refuses instead of removing something that may be open.
  */
 
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { canonicalSessionId, dshHome, sessionsRootFor } from './paths.js'

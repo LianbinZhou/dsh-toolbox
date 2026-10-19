@@ -17,15 +17,28 @@
  *      instead of keeping timers alive for five seconds.
  */
 
+import { createDshAdapter } from './dsh-adapter.js'
+
 const CACHE_KEY = 'dsh-toolbox.switches.v1'
 const ROW_ID = 'toolbox'
 const PACKAGE = 'dsh-toolbox'
 const RETRY_MS = 150
 const MAX_RETRIES = 40
 
+// 同一个 ctx 复用同一个 adapter：否则每次轮询都新建一个，警告去重就失效了。
+const formAdapters = new WeakMap()
+
 function formService(ctx) {
   try {
-    return (ctx && typeof ctx.get === 'function' && ctx.get('configForms')) || undefined
+    if (!ctx || typeof ctx !== 'object') return undefined
+    let adapter = formAdapters.get(ctx)
+    if (!adapter) {
+      // configForms 是可选能力：缺了设置卡片读不到值，降级即可。
+      // quiet：这个探测每几毫秒一次，不能每次都刷日志。
+      adapter = createDshAdapter(ctx, { quiet: true })
+      formAdapters.set(ctx, adapter)
+    }
+    return adapter.get('configForms')
   } catch (error) {
     return undefined
   }

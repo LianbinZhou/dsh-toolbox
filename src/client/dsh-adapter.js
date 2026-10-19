@@ -43,11 +43,14 @@ export const REQUIRED_SERVICES = Object.freeze(['slots', 'locale', 'sessions'])
 export function createDshAdapter(ctx, options = {}) {
   const label = options.label ?? 'dsh-toolbox'
   const logger = options.logger ?? console
+  // quiet：只探测不刷日志。给「高频轮询的可选服务」用（例如设置卡片的重试）。
+  const quiet = options.quiet === true
   const warned = new Set()
   const missing = []
   const degraded = []
 
   const warnOnce = (service, detail) => {
+    if (quiet) return
     if (warned.has(service)) return
     warned.add(service)
     try {

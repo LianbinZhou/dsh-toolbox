@@ -12,10 +12,12 @@
   function createDshAdapter(ctx, options = {}) {
     const label = options.label ?? "dsh-toolbox";
     const logger = options.logger ?? console;
+    const quiet = options.quiet === true;
     const warned = /* @__PURE__ */ new Set();
     const missing = [];
     const degraded = [];
     const warnOnce = (service, detail) => {
+      if (quiet) return;
       if (warned.has(service)) return;
       warned.add(service);
       try {
@@ -1785,7 +1787,7 @@
             if (declared) return declared;
           } catch (error) {
           }
-          return typeof target.get === "function" ? target.get("layout") : void 0;
+          return createDshAdapter(target).get("layout");
         }
         return Reflect.get(target, prop);
       }
@@ -2298,9 +2300,16 @@
   var PACKAGE = "dsh-toolbox";
   var RETRY_MS = 150;
   var MAX_RETRIES = 40;
+  var formAdapters = /* @__PURE__ */ new WeakMap();
   function formService(ctx) {
     try {
-      return ctx && typeof ctx.get === "function" && ctx.get("configForms") || void 0;
+      if (!ctx || typeof ctx !== "object") return void 0;
+      let adapter = formAdapters.get(ctx);
+      if (!adapter) {
+        adapter = createDshAdapter(ctx, { quiet: true });
+        formAdapters.set(ctx, adapter);
+      }
+      return adapter.get("configForms");
     } catch (error) {
       return void 0;
     }
@@ -2683,7 +2692,7 @@
       listSlot: PANEL_SLOT2,
       entries: readEntries,
       open: () => {
-        const layout = (typeof ctx.get === "function" ? ctx.get("layout") : void 0) || ctx.layout;
+        const layout = createDshAdapter(ctx).get("layout");
         if (!layout || typeof layout.selectPanel !== "function") return "no layout service";
         try {
           layout.selectPanel(PANEL_ID);

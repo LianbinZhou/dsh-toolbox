@@ -15,6 +15,7 @@
  * `sessionSearch` switch and reconciled on `loader/volatile-update`.
  */
 
+import { createHostAdapter } from './dsh-adapter.js'
 import { Config, isOn, readConfig } from './config.js'
 import { install as installSessionSearch } from './features/session-search.js'
 import { createArchiveHttpLifecycle } from './features/archive/host-feature.js'
@@ -112,16 +113,13 @@ export function apply(ctx, config) {
   let archiveApiReason = 'not attempted'
   const ensureArchiveApi = () => {
     if (archiveApi !== null) return archiveApi
-    const serviceOf = (name) => {
-      try {
-        return typeof sessionCtx.get === 'function' ? sessionCtx.get(name) : undefined
-      } catch (error) {
-        return undefined
-      }
-    }
+    // 宿主服务一律过防腐层：缺了只降级并记警告，不让归档功能凭空消失。
+    const host = createHostAdapter(sessionCtx)
+    const serviceOf = (name) => host.get(name)
     const registry = serviceOf('workspaceRegistry')
     const sessions = serviceOf('sessions')
-    console.info('[dsh-toolbox] archive adapter probe: workspaceRegistry=' + (registry ? typeof registry : 'missing') + ', sessions=' + (sessions ? typeof sessions : 'missing'))
+    const hostCheck = host.selfCheck()
+    console.info('[dsh-toolbox] archive adapter probe: workspaceRegistry=' + (registry ? typeof registry : 'missing') + ', sessions=' + (sessions ? typeof sessions : 'missing') + ' | 自检 missing=' + JSON.stringify(hostCheck.missing) + ' degraded=' + JSON.stringify(hostCheck.degraded))
     let adapter = null
     try {
       adapter = createSessionAdapter({ registry, sessions })
@@ -180,12 +178,9 @@ export function apply(ctx, config) {
    */
   const syncArchiveHttp = (reason) => {
     console.info('[dsh-toolbox] archive sync (' + reason + ')')
-    let webServer
-    try {
-      webServer = typeof ctx.get === 'function' ? ctx.get('webServer') : undefined
-    } catch (error) {
-      webServer = undefined
-    }
+    // 同上：缺 webServer 时路由不挂，但插件继续跑。
+    const hostAdapter = createHostAdapter(ctx)
+    const webServer = hostAdapter.get('webServer')
     if (webServer === undefined || webServer === null || typeof webServer.register !== 'function') {
       if (archiveHttp !== null) {
         archiveHttp.dispose()

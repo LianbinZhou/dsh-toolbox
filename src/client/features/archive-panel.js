@@ -308,7 +308,8 @@ function ArchiveView() {
     listSlot: PANEL_SLOT,
     entries: readEntries,
     open: () => {
-      const layout = (typeof ctx.get === 'function' ? ctx.get('layout') : undefined) || ctx.layout
+      // layout 是可选能力：没有它最多是点侧栏行不切面板，不该崩。
+  const layout = createDshAdapter(ctx).get('layout')
       if (!layout || typeof layout.selectPanel !== 'function') return 'no layout service'
       try {
         layout.selectPanel(PANEL_ID)

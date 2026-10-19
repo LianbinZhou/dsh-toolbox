@@ -21,6 +21,7 @@
  * React arrives through the runtime bridge (late-bound), never as an import.
  */
 
+import { createDshAdapter } from '../dsh-adapter.js'
 import { h, useEffect, useState, fragment } from '../runtime.js';
 
 
@@ -584,7 +585,7 @@ export function mount(ctx, env) {
                 } catch (error) {
                     /* not declared by this plugin: fall through */
                 }
-                return typeof target.get === 'function' ? target.get('layout') : undefined
+                return createDshAdapter(target).get('layout')
             }
             return Reflect.get(target, prop)
         },
