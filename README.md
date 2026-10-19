@@ -117,9 +117,16 @@ node tools/prove-red.mjs   # 把同一套存储矩阵跑在旧实现上：应报
 `npm test` **故意不预先构建**：`build-fresh` 先读已提交的 `client.js`，再原地重建并逐字节比对，
 专门用来抓"改了源码忘了 build"。
 
-**真实浏览器 CORS 用例是可选的**：`test/browser-cors.test.mjs` 需要 Playwright，
-没装就 skip（不会假装通过）。装上才跑：
-`npm i --no-save playwright && npx playwright install chromium`（约 120 MB，需走代理）。
+**真实浏览器测试需要 Playwright，已经锁进 `devDependencies`（1.64.1，精确版本）。**
+
+`npm ci` 会装 Playwright 包，但**浏览器二进制不在 npm 包里**，第一次要单独装一次（约 120 MB，需走代理）：
+
+```sh
+npx playwright install chromium   # 只跑一次，之后缓存复用
+```
+
+这些测试**没环境时会报错而不是跳过**——这是故意的：我们要的是 `448 / 448，0 skipped`，
+而不是"没环境就跳过"的假绿。
 
 `prove-red` 是测试的**反向证据**：它把同一套矩阵跑在 `test/fixtures/legacy-guard.mjs`（S3 之前那份 patch
 `Storage.prototype` 的实现）上，正常应有一片红。**如果哪天它全绿了，说明矩阵不再咬人**，工具会以退出码 1 报警。
