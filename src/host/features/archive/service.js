@@ -495,6 +495,8 @@ export function createArchiveService(deps) {
           continue
         }
         await withLock(entry.id, async () => {
+          // 「claim 写了但目录没动」才该删记录；这里记一笔，防止误删。
+          console.warn('[dsh-toolbox] heal 丢弃 deleting 记录（垃圾箱里没找到目录）: ' + entry.id + ' trashPath=' + entry.trashPath)
           deps.journal.write(withoutEntry(deps.journal, entry.id))
         })
         healed.push(entry.id)
