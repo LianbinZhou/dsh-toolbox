@@ -87,7 +87,7 @@ dsh-toolbox/
 ├── tools/
 │   ├── build.mjs             # esbuild 构建
 │   └── prove-red.mjs         # 把存储矩阵跑在旧实现上，证明测试真的咬人
-└── test/                     # 106 项，全绿
+└── test/                     # 448 项，全绿
 ```
 
 客户端功能 5 个（`quote-reply` / `panel-menu` / `draft-saver` / `archive-panel` / `plugin-zh`）；
@@ -110,7 +110,7 @@ dsh-toolbox/
 ```sh
 npm install
 npm run build              # src/client/index.js -> client.js
-npm test                   # 410 项（含真实 Chromium 的 CORS 用例）
+npm test                   # 448 项，0 跳过（含 4 条真实 Chromium 用例）
 node tools/prove-red.mjs   # 把同一套存储矩阵跑在旧实现上：应报 14 红
 ```
 
