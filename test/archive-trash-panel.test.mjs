@@ -77,3 +77,36 @@ test('页签 · 回收箱行显示 journal 里的会话名，不是 id 尾段', 
   assert.equal(row.label, '清理旧安装并重装Easel', '必须用 journal 里的标题')
   assert.equal(/^会话 [0-9a-f]{8}$/.test(row.label), false, '不能退化成 id 尾段')
 })
+
+
+test('剩余天数 · 向下取整（13.9 天显示 13，不是 14）', async () => {
+  const DAY = 86400000
+  const client = fakeClient()
+  // 删除于「13.9 天前」：expiresAt = now + 0.1 天
+  client.trash = async () => ({
+    ok: true,
+    rows: [{ id: 'session-aaaaaaaa-1111-2222-3333-444444444444', title: 'x', phase: 'cleaned', keptDays: 14, at: Date.now() - 13.9 * DAY, expiresAt: Date.now() + 0.1 * DAY }],
+    protectedCount: 1,
+    maxProtected: 200,
+    keptDays: 14,
+  })
+  const panel = createArchivePanel({ client, isEnabled: () => true })
+  await panel.refreshTrash()
+  const row = panel.view().trash.rows[0]
+  assert.equal(row.remainingDays, 0, '不到 1 天算 0（今天到期）')
+})
+
+test('剩余天数 · 还剩 13 天多时显示 13', async () => {
+  const DAY = 86400000
+  const client = fakeClient()
+  client.trash = async () => ({
+    ok: true,
+    rows: [{ id: 'session-aaaaaaaa-1111-2222-3333-444444444444', title: 'x', phase: 'cleaned', keptDays: 14, at: Date.now() - DAY, expiresAt: Date.now() + 13.5 * DAY }],
+    protectedCount: 1,
+    maxProtected: 200,
+    keptDays: 14,
+  })
+  const panel = createArchivePanel({ client, isEnabled: () => true })
+  await panel.refreshTrash()
+  assert.equal(panel.view().trash.rows[0].remainingDays, 13, '13.5 天必须显示 13')
+})

@@ -2274,7 +2274,7 @@
               at: row.at,
               keptDays: row.keptDays,
               // 剩余天数按到期时间算：keptDays 是总期，不是剩余。
-              remainingDays: typeof row.expiresAt === "number" && row.expiresAt > 0 ? Math.max(0, Math.ceil((row.expiresAt - Date.now()) / 864e5)) : row.keptDays
+              remainingDays: typeof row.expiresAt === "number" && row.expiresAt > 0 ? Math.max(0, Math.floor((row.expiresAt - Date.now()) / 864e5)) : row.keptDays
             })),
             protectedCount: trashMeta.protectedCount,
             maxProtected: trashMeta.maxProtected,
@@ -2487,6 +2487,12 @@
       return false;
     }
   }
+  function phaseLabel(phase) {
+    if (phase === "trashed") return "待清理";
+    if (phase === "cleaned") return "已移入回收箱";
+    if (phase === "done") return "已彻底删除";
+    return "处理中";
+  }
   function mount4(ctx, env) {
     if (!ctx.slots || typeof ctx.slots.register !== "function" || typeof ctx.slots.inject !== "function") {
       throw new Error("dsh-toolbox: the slots service is unavailable");
@@ -2617,7 +2623,7 @@
           view.trash.rows.length === 0 && !view.message ? h("p", { class: "dsh-toolbox-archive-empty" }, "回收箱是空的") : null,
           h("ul", null, view.trash.rows.map(
             (row) => h("li", { key: row.id }, [
-              rowTitle(row, String(row.phase) + " · " + (row.remainingDays === 0 ? "今天到期" : "剩余 " + row.remainingDays + " 天")),
+              rowTitle(row, phaseLabel(row.phase) + " · " + (row.remainingDays === 0 ? "今天到期" : "剩余 " + row.remainingDays + " 天")),
               h("button", { type: "button", disabled: busy, onClick: run(() => panel.restoreTrash(row.id)) }, "恢复"),
               h("button", {
                 type: "button",

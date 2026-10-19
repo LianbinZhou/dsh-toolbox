@@ -92,6 +92,14 @@ export async function refreshHostSessionsOf(ctx, adapter) {
   }
 }
 
+/** 内部状态码 → 给人看的中文（不能把 cleaned/trashed 直接露给用户）。 */
+export function phaseLabel(phase) {
+  if (phase === 'trashed') return '待清理'
+  if (phase === 'cleaned') return '已移入回收箱'
+  if (phase === 'done') return '已彻底删除'
+  return '处理中'
+}
+
 export function mount(ctx, env) {
   if (!ctx.slots || typeof ctx.slots.register !== 'function' || typeof ctx.slots.inject !== 'function') {
     throw new Error('dsh-toolbox: the slots service is unavailable')
@@ -230,7 +238,7 @@ function ArchiveView() {
               : null,
             h('ul', null, view.trash.rows.map((row) =>
               h('li', { key: row.id }, [
-                rowTitle(row, String(row.phase) + ' · ' + (row.remainingDays === 0 ? '今天到期' : '剩余 ' + row.remainingDays + ' 天')),
+                rowTitle(row, phaseLabel(row.phase) + ' · ' + (row.remainingDays === 0 ? '今天到期' : '剩余 ' + row.remainingDays + ' 天')),
                 h('button', { type: 'button', disabled: busy, onClick: run(() => panel.restoreTrash(row.id)) }, '恢复'),
                 h('button', {
                   type: 'button',

@@ -224,7 +224,8 @@ export function createArchivePanel({ client, isEnabled }) {
                 keptDays: row.keptDays,
                 // 剩余天数按到期时间算：keptDays 是总期，不是剩余。
                 remainingDays: typeof row.expiresAt === 'number' && row.expiresAt > 0
-                  ? Math.max(0, Math.ceil((row.expiresAt - Date.now()) / 86400000))
+  // 向下取整：13.9 天是「还剩 13 天」，不是 14。
+                  ? Math.max(0, Math.floor((row.expiresAt - Date.now()) / 86400000))
                   : row.keptDays,
               })),
               protectedCount: trashMeta.protectedCount,
