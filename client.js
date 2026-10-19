@@ -2484,6 +2484,60 @@
       return false;
     }
   }
+  function startArchivePolling({ panel, onChange, doc, intervalMs = 2e3 }) {
+    let stopped = false;
+    let timer = null;
+    let running = false;
+    const ids = () => panel.view().rows.map((row) => row.id).join(",");
+    const tick = async () => {
+      if (stopped || running) return;
+      if (doc && doc.visibilityState === "hidden") return;
+      running = true;
+      const before = ids();
+      try {
+        await panel.refresh();
+      } catch (error) {
+        running = false;
+        return;
+      }
+      running = false;
+      if (stopped) return;
+      if (before !== ids()) {
+        try {
+          onChange();
+        } catch (error) {
+        }
+      }
+    };
+    const startTimer = () => {
+      if (stopped || timer !== null) return;
+      timer = setInterval(() => {
+        void tick();
+      }, intervalMs);
+    };
+    const stopTimer = () => {
+      if (timer !== null) {
+        clearInterval(timer);
+        timer = null;
+      }
+    };
+    const onVisibility = () => {
+      if (!doc) return;
+      if (doc.visibilityState === "hidden") stopTimer();
+      else startTimer();
+    };
+    startTimer();
+    if (doc && typeof doc.addEventListener === "function") doc.addEventListener("visibilitychange", onVisibility);
+    return {
+      tick,
+      isRunning: () => timer !== null,
+      stop() {
+        stopped = true;
+        stopTimer();
+        if (doc && typeof doc.removeEventListener === "function") doc.removeEventListener("visibilitychange", onVisibility);
+      }
+    };
+  }
   async function refreshHostSessionsOf(ctx, adapter) {
     const dsh = adapter ?? createDshAdapter(ctx);
     const sessions = dsh.get("sessions");
@@ -2560,19 +2614,12 @@
         } catch (error) {
           console.warn("[dsh-toolbox] 订阅会话列表失败（面板将不会自动跟随归档动作）", error);
         }
-        const poll = setInterval(() => {
-          if (!live) return;
-          const before = panel.view().rows.map((row) => row.id).join(",");
-          void panel.refresh().then(() => {
-            if (!live) return;
-            const after = panel.view().rows.map((row) => row.id).join(",");
-            if (before !== after) sync();
-          }).catch(() => {
-          });
-        }, 2e3);
+        const poller = startArchivePolling({ panel, onChange: () => {
+          if (live) sync();
+        }, doc: typeof document === "undefined" ? void 0 : document });
         return () => {
           live = false;
-          clearInterval(poll);
+          poller.stop();
           try {
             if (typeof stopWatch === "function") stopWatch();
           } catch (error) {

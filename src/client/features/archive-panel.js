@@ -77,6 +77,80 @@ export function archiveApiEnabled() {
  * 「未分组」不是 workspace 表算出来的：它是 sessions.list 减去各工作区成员。
  * 删掉目录只改了磁盘，Session 列表还是旧快照——不刷这一步，侧栏那一行就永远在。
  */
+/**
+ * 归档面板的轮询器（抽成独立函数才可测）。
+ *
+ * 三条规矩：
+ *   1. 页面隐藏（最小化 / 切标签）时暂停，不在后台空转；
+ *   2. stop() 必须彻底清掉定时器与监听；
+ *   3. 每次拉到数据先 diff，id 列表一样就不通知重渲染（否则界面每 2 秒闪一下）。
+ *
+ * @param {{ panel: object, onChange: () => void, doc?: object, intervalMs?: number }} options
+ * @returns {{ stop: () => void, tick: () => Promise<void>, isRunning: () => boolean }}
+ */
+export function startArchivePolling({ panel, onChange, doc, intervalMs = 2000 }) {
+  let stopped = false
+  let timer = null
+  let running = false
+
+  const ids = () => panel.view().rows.map((row) => row.id).join(',')
+
+  const tick = async () => {
+    if (stopped || running) return
+    // 页面不可见就别干活。
+    if (doc && doc.visibilityState === 'hidden') return
+    running = true
+    const before = ids()
+    try {
+      await panel.refresh()
+    } catch (error) {
+      running = false
+      return
+    }
+    running = false
+    if (stopped) return
+    if (before !== ids()) {
+      try {
+        onChange()
+      } catch (error) {
+        /* 通知失败不影响轮询 */
+      }
+    }
+  }
+
+  const startTimer = () => {
+    if (stopped || timer !== null) return
+    timer = setInterval(() => {
+      void tick()
+    }, intervalMs)
+  }
+  const stopTimer = () => {
+    if (timer !== null) {
+      clearInterval(timer)
+      timer = null
+    }
+  }
+
+  const onVisibility = () => {
+    if (!doc) return
+    if (doc.visibilityState === 'hidden') stopTimer()
+    else startTimer()
+  }
+
+  startTimer()
+  if (doc && typeof doc.addEventListener === 'function') doc.addEventListener('visibilitychange', onVisibility)
+
+  return {
+    tick,
+    isRunning: () => timer !== null,
+    stop() {
+      stopped = true
+      stopTimer()
+      if (doc && typeof doc.removeEventListener === 'function') doc.removeEventListener('visibilitychange', onVisibility)
+    },
+  }
+}
+
 export async function refreshHostSessionsOf(ctx, adapter) {
   // 所有官方访问都过防腐层：接口没了只降级（侧栏需要手动刷新），不让插件崩。
   const dsh = adapter ?? createDshAdapter(ctx)
@@ -166,25 +240,12 @@ function ArchiveView() {
         console.warn('[dsh-toolbox] 订阅会话列表失败（面板将不会自动跟随归档动作）', error)
       }
 
-      // 兜底轮询：归档状态存在宿主的 workspaceRegistry 里，客户端会话列表
-      // 不一定会因为「左侧归档」而变化（S6 实测订阅无效）。
-      // 每 2 秒重拉一次，但**只有列表真的变了才重渲染**，避免无谓刷新。
-      const poll = setInterval(() => {
-        if (!live) return
-        const before = panel.view().rows.map((row) => row.id).join(',')
-        void panel
-          .refresh()
-          .then(() => {
-            if (!live) return
-            const after = panel.view().rows.map((row) => row.id).join(',')
-            if (before !== after) sync()
-          })
-          .catch(() => {})
-      }, 2000)
+      // 兜底轮询（见 startArchivePolling 的三条规矩：隐藏暂停 / 卸载清理 / diff 才通知）。
+      const poller = startArchivePolling({ panel, onChange: () => { if (live) sync() }, doc: typeof document === 'undefined' ? undefined : document })
 
       return () => {
         live = false
-        clearInterval(poll)
+        poller.stop()
         try {
           if (typeof stopWatch === 'function') stopWatch()
         } catch (error) {
