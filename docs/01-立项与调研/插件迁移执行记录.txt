@@ -1,0 +1,24 @@
+﻿[@linxin666 全家桶迁移执行记录]  2026-09-30 13:13:08
+
+[第 1 步] 安装 6 个独立包（+ 原有 skill-explorer = 7 个保留项）
+  --- _install-dsh-client-ui-git-graph.log
+      + @linxin666/dsh-client-ui-git-graph ^0.4.4
+      Packages: -10
+  --- _install-dsh-client-ui-plugin-manager.log
+      + @linxin666/dsh-client-ui-plugin-manager ^0.4.4
+      Packages: -10
+  --- _install-dsh-client-ui-web-ui-settings.log
+      + @linxin666/dsh-client-ui-web-ui-settings ^0.4.4
+      Packages: -10
+  --- _install-dsh-session-archive.log
+      + @linxin666/dsh-session-archive ^0.4.4
+      Packages: -10
+  --- _install-dsh-update.log
+      + @linxin666/dsh-update ^0.4.4
+      Packages: -10
+  --- _install-usage.log
+      + @linxin666/dsh-usage ^0.4.4
+      Packages: -10
+
+[第 3 步] 卸载全家桶
+      - @linxin666/dsh-web-all 0.4.4

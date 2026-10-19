@@ -1,0 +1,34 @@
+=== 本机磁盘状态 ===
+  DSH 根：C:\Users\zhou0\.dsh
+  回收箱记录：7 条
+    - session-67c03d9d-e723-4386-ae66-421fa1857968  phase=cleaned  title=检查电脑中Claude Code安装路径  剩余≈null 天
+    - session-9001f4dd-12c3-4a64-b928-a910802931b8  phase=cleaned  title=Obsidian直接打开md文件图标优化  剩余≈null 天
+    - session-bcc284bc-6492-4eba-8fd8-2f53d2ddaf86  phase=cleaned  title=网页版与桌面版插件不同步原因  剩余≈null 天
+    - session-47855b41-f62c-4768-818a-0dc09bf1a2cd  phase=cleaned  title=一、帮我卸载清理掉我桌面的  剩余≈null 天
+    - session-d7979a06-e834-4c5c-ac38-c60d3cc3822f  phase=cleaned  title=中国标准空白地图A4横向打印  剩余≈null 天
+    - session-c601bc31-a533-4b8d-ba35-da0b920274da  phase=cleaned  title=右键添加引用功能对话无回应原因  剩余≈null 天
+    - session-69bdb619-596c-4978-a202-68a73d08e5b2  phase=cleaned  title=继续 dsh-quote-reply 插件交接工作  剩余≈null 天
+
+=== 证据 2：workspace 成员里是否还有已删除的 id ===
+  ✔ 没有残留（侧栏不会再显示它们）
+
+=== 证据 3：projection cache 里是否还有已删除的 id ===
+  ✔ 没有残留
+
+=== 证据 4：回收箱接口 ===
+  ✔ HTTP 200  protectedCount=7  maxProtected=200  keptDays=14
+    - 检查电脑中Claude Code安装路径  cleaned  剩余 14 天
+    - Obsidian直接打开md文件图标优化  cleaned  剩余 14 天
+    - 网页版与桌面版插件不同步原因  cleaned  剩余 14 天
+    - 一、帮我卸载清理掉我桌面的  cleaned  剩余 14 天
+    - 中国标准空白地图A4横向打印  cleaned  剩余 14 天
+    - 右键添加引用功能对话无回应原因  cleaned  剩余 14 天
+    - 继续 dsh-quote-reply 插件交接工作  cleaned  剩余 14 天
+
+=== 证据 6：归档集合里是否还有回收箱里的 id ===
+  ✔ 没有交集（归档集合 17 条，回收箱 7 条）
+
+说明：证据 1（删除后侧栏立即消失）与证据 5（恢复回原工作区）需要真点一次，
+      本脚本只做磁盘与接口侧的核对。
+      ⚠ 本脚本读的是**磁盘**，而侧栏来自运行时内存，落盘有延迟；
+      刚删完就查可能看到「没有残留」其实只是还没写下去。
