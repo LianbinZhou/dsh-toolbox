@@ -2545,8 +2545,27 @@
         void panel.refresh().then(() => {
           if (live) sync();
         });
+        let stopWatch;
+        try {
+          const sessions = createDshAdapter(ctx).get("sessions");
+          const list = sessions && sessions.list;
+          if (list && typeof list.subscribe === "function") {
+            stopWatch = list.subscribe(() => {
+              if (!live) return;
+              void panel.refresh().then(() => {
+                if (live) sync();
+              });
+            });
+          }
+        } catch (error) {
+          console.warn("[dsh-toolbox] 订阅会话列表失败（面板将不会自动跟随归档动作）", error);
+        }
         return () => {
           live = false;
+          try {
+            if (typeof stopWatch === "function") stopWatch();
+          } catch (error) {
+          }
         };
       }, []);
       const refreshHostSessions = () => refreshHostSessionsOf(ctx);

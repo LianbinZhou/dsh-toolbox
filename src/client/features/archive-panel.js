@@ -148,7 +148,32 @@ function ArchiveView() {
     useEffect(() => {
       let live = true
       void panel.refresh().then(() => { if (live) sync() })
-      return () => { live = false }
+
+      // 订阅 DSH 自己的会话列表：左侧「归档 / 取消归档」是官方动作，
+      // 不经过我们的按钮，面板不订阅就永远停在旧列表上（要切页面才更新）。
+      // 反过来「恢复」是我们自己的按钮，所以一直即时。
+      let stopWatch
+      try {
+        const sessions = createDshAdapter(ctx).get('sessions')
+        const list = sessions && sessions.list
+        if (list && typeof list.subscribe === 'function') {
+          stopWatch = list.subscribe(() => {
+            if (!live) return
+            void panel.refresh().then(() => { if (live) sync() })
+          })
+        }
+      } catch (error) {
+        console.warn('[dsh-toolbox] 订阅会话列表失败（面板将不会自动跟随归档动作）', error)
+      }
+
+      return () => {
+        live = false
+        try {
+          if (typeof stopWatch === 'function') stopWatch()
+        } catch (error) {
+          /* 退订失败不影响卸载 */
+        }
+      }
     }, [])
 
     const refreshHostSessions = () => refreshHostSessionsOf(ctx)
