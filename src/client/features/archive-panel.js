@@ -166,8 +166,25 @@ function ArchiveView() {
         console.warn('[dsh-toolbox] 订阅会话列表失败（面板将不会自动跟随归档动作）', error)
       }
 
+      // 兜底轮询：归档状态存在宿主的 workspaceRegistry 里，客户端会话列表
+      // 不一定会因为「左侧归档」而变化（S6 实测订阅无效）。
+      // 每 2 秒重拉一次，但**只有列表真的变了才重渲染**，避免无谓刷新。
+      const poll = setInterval(() => {
+        if (!live) return
+        const before = panel.view().rows.map((row) => row.id).join(',')
+        void panel
+          .refresh()
+          .then(() => {
+            if (!live) return
+            const after = panel.view().rows.map((row) => row.id).join(',')
+            if (before !== after) sync()
+          })
+          .catch(() => {})
+      }, 2000)
+
       return () => {
         live = false
+        clearInterval(poll)
         try {
           if (typeof stopWatch === 'function') stopWatch()
         } catch (error) {

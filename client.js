@@ -2560,8 +2560,19 @@
         } catch (error) {
           console.warn("[dsh-toolbox] 订阅会话列表失败（面板将不会自动跟随归档动作）", error);
         }
+        const poll = setInterval(() => {
+          if (!live) return;
+          const before = panel.view().rows.map((row) => row.id).join(",");
+          void panel.refresh().then(() => {
+            if (!live) return;
+            const after = panel.view().rows.map((row) => row.id).join(",");
+            if (before !== after) sync();
+          }).catch(() => {
+          });
+        }, 2e3);
         return () => {
           live = false;
+          clearInterval(poll);
           try {
             if (typeof stopWatch === "function") stopWatch();
           } catch (error) {
