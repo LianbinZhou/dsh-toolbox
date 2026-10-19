@@ -79,7 +79,7 @@ test('页签 · 回收箱行显示 journal 里的会话名，不是 id 尾段', 
 })
 
 
-test('剩余天数 · 向下取整（13.9 天显示 13，不是 14）', async () => {
+test('剩余天数 · 剩余 0.1 天显示 0（今天到期，不显示 1）', async () => {
   const DAY = 86400000
   const client = fakeClient()
   // 删除于「13.9 天前」：expiresAt = now + 0.1 天
