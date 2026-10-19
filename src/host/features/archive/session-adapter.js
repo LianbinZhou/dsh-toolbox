@@ -343,9 +343,12 @@ export function createSessionAdapter({ registry, sessions, sessionsRoot, storage
       } catch (error) {
         /* 索引坏了就交给宿主，别在删除路径上炸 */
       }
-      const perSessionDir = join(home, 'storages', 'session_projcache', 'sessions')
+      // 每会话缓存文件（session_projcache/sessions/<id>.json）**不删**。
+      // 它是 DSH 的标题快照（rows.title）：删掉之后恢复回来的会话会显示「未命名」，
+      // 因为恢复路径不会重建它。目录已经移走，保留快照不会造成幽灵行
+      // （侧栏列表以 sessions.list / 目录为准，缓存只提供标题）。
       const failures = []
-      for (const key of spellings) {
+      for (const key of []) {
         try {
           const file = join(perSessionDir, key + '.json')
           if (existsSync(file)) {
