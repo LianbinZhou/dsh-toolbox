@@ -172,15 +172,15 @@ npm warn install-scripts   esbuild@0.28.2 (postinstall: node install.js)
 npm run build
 ```
 
-实测约 **430 毫秒**，输出：
+实测约 **60 毫秒 ~ 半秒**（取决于机器），输出：
 
 ```
-> dsh-toolbox@0.7.1 build
+> dsh-toolbox@0.7.4 build
 > node tools/build.mjs
 
   client.js  130.6kb
 
-⚡ Done in 430ms
+⚡ Done in 60ms
 ```
 
 ### 4.4 注册到 DSH
@@ -348,7 +348,7 @@ git config --global --unset http.proxy
 
 **这一节不是劝退，是让你装之前心里有数。**
 
-### 8.1 会话搜索用内存索引（v0.7.3 起）
+### 8.1 会话搜索用内存索引（v0.7.4 起）
 
 **历史问题（v0.7.1 及更早）**：`cordis.patch.yml` 里把全文搜索索引的路径**硬编码**成了作者自己电脑上的绝对路径：
 
@@ -358,7 +358,7 @@ path: 'C:\Users\zhou0\.dsh\storages\session-search.db'
 
 这个路径在别人的机器上不存在，装上之后**会话搜索会静默失效**（其余 6 个功能不受影响）。
 
-**v0.7.3 已修复**：改成 `:memory:`（内存索引）。
+**v0.7.4 起已修复**（修复本身在 v0.7.3 就进了代码，v0.7.4 是包版本号与 tag 对齐后的发布版）：改成 `:memory:`（内存索引）。
 
 - ✅ 不写任何磁盘路径，不指向任何人的目录，**谁装都能用**
 - ✅ 不往你的磁盘里多塞一个数据库文件
