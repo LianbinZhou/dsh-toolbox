@@ -7,7 +7,8 @@
  *   R1  只允许删除**严格两级**的目录（<sessionsRoot>/<project>/<segment>）
  *   R2  junction/symlink 即使指向根**内部**也必须拒绝；删除前重新 lstat
  *   R3  id 用 allowlist；设备名、空格、编码、非字符串一律挡
- *   R7  scrubProjcache 不跟随符号链接，index 只动 sessions 表
+ *   R7  scrubProjcache 只动 index 的 sessions 表；每会话标题快照**永不删除**
+ *   R8  宿主缓存护栏：unit 版本不符/未变化/原子写，都不许改到别人的文件
  *
  * 全部用真实临时目录 + 真实 junction 跑。
  */
@@ -19,6 +20,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   symlinkSync,
   unlinkSync,
@@ -224,20 +226,32 @@ test('R3d · canonicalSessionId never throws on a non-string', () => {
 
 /* ------------------------------- R7 ------------------------------- */
 
-test('R7a · scrubProjcache does not follow a symlinked cache file', () => {
+test('R7a · the per-session cache file (the harness title snapshot) is never touched', () => {
   const world = makeWorld()
   try {
-    const victim = join(world.base, 'outside', 'marker.json')
     const id = 'session-abcdef12-1111-2222-3333-444444444444'
-    const linkName = join(world.projSessions, id + '.json')
+    const snapshot = join(world.projSessions, id + '.json')
+    const body = '{"record":{"rows":{"title":{"seq":477,"val":"keep me"}}}}'
+    writeFileSync(snapshot, body, 'utf8')
+
+    // A symlink in the same directory must not be followed either. Creating one
+    // needs privileges on some Windows setups, so a failure just skips that half.
+    const victim = join(world.base, 'outside', 'marker.json')
+    const linkName = join(world.projSessions, 'session-linky.json')
+    let linked = false
     try {
       symlinkSync(victim, linkName)
+      linked = true
     } catch (error) {
-      return // no symlink support: covered elsewhere
+      /* no symlink support: the traversal gate is covered by R3c/S2 */
     }
-    scrubProjcache(world.base, [id])
-    assert.equal(existsSync(victim), true, 'a symlinked cache entry must not delete its target')
-    assert.equal(existsSync(linkName), false, 'the cache entry itself is dropped')
+
+    scrubProjcache(world.base, [id, 'session-linky'])
+
+    assert.equal(existsSync(snapshot), true, 'the title snapshot must survive a scrub')
+    assert.equal(readFileSync(snapshot, 'utf8'), body, 'and must stay byte-identical')
+    assert.equal(existsSync(victim), true, 'a symlinked cache entry must not be followed')
+    if (linked) assert.equal(existsSync(linkName), true, 'the entry itself is not removed either')
   } finally {
     destroy(world)
   }
@@ -250,6 +264,8 @@ test('R7b · the aggregate index keeps every table except sessions', () => {
     const target = 'session-aaaaaaaa-1111-2222-3333-444444444444'
     const keep = 'session-bbbbbbbb-1111-2222-3333-444444444444'
     const index = {
+      unit: { name: 'session_projcache', version: 3 },
+      global: null,
       tables: {
         sessions: { [target]: { title: 'x' }, [keep]: { title: 'y' } },
         workspaces: { keep: true },
@@ -259,12 +275,14 @@ test('R7b · the aggregate index keeps every table except sessions', () => {
     mkdirSync(dirname(indexPath), { recursive: true })
     writeFileSync(indexPath, JSON.stringify(index), 'utf8')
 
-    scrubProjcache(world.base, [target])
+    const result = scrubProjcache(world.base, [target])
     const after = JSON.parse(readFileSync(indexPath, 'utf8'))
+    assert.equal(result.touched, 1, 'exactly one row went away')
     assert.equal(after.tables.sessions[target], undefined, 'the target row is gone')
     assert.ok(after.tables.sessions[keep], 'the other session row stays')
     assert.deepEqual(after.tables.workspaces, { keep: true }, 'other tables are untouched')
     assert.deepEqual(after.tables.other, { keep: true })
+    assert.deepEqual(after.unit, index.unit, 'the unit header is preserved verbatim')
   } finally {
     destroy(world)
   }
@@ -277,8 +295,79 @@ test('R7c · a corrupt index is left byte-identical', () => {
     mkdirSync(dirname(indexPath), { recursive: true })
     const corrupt = '{ this is not json'
     writeFileSync(indexPath, corrupt, 'utf8')
-    scrubProjcache(world.base, ['session-aaaa'])
+    const result = scrubProjcache(world.base, ['session-aaaa'])
     assert.equal(readFileSync(indexPath, 'utf8'), corrupt, 'a corrupt index must not be rewritten')
+    assert.equal(result.skipped, 'unparsable', 'and the skip is reported, not swallowed silently')
+  } finally {
+    destroy(world)
+  }
+})
+
+/* -------------------- R8 · the host storage guard -------------------- */
+
+test('R8a · an unknown unit header leaves the index byte-identical', () => {
+  const world = makeWorld()
+  try {
+    const indexPath = join(world.base, 'storages', 'session_projcache.json')
+    const target = 'session-aaaaaaaa-1111-2222-3333-444444444444'
+    for (const unit of [
+      { name: 'session_projcache', version: 4 },
+      { name: 'something_else', version: 3 },
+      undefined,
+    ]) {
+      const index = { unit, tables: { sessions: { [target]: { title: 'x' } } } }
+      const body = JSON.stringify(index)
+      mkdirSync(dirname(indexPath), { recursive: true })
+      writeFileSync(indexPath, body, 'utf8')
+      const result = scrubProjcache(world.base, [target])
+      assert.equal(readFileSync(indexPath, 'utf8'), body, 'unit ' + JSON.stringify(unit) + ' must not be rewritten')
+      assert.equal(result.skipped, 'unit-mismatch', 'unit ' + JSON.stringify(unit) + ' is refused explicitly')
+      assert.equal(result.touched, 0)
+    }
+  } finally {
+    destroy(world)
+  }
+})
+
+test('R8b · a scrub that changes nothing never rewrites the file', () => {
+  const world = makeWorld()
+  try {
+    const indexPath = join(world.base, 'storages', 'session_projcache.json')
+    const index = {
+      unit: { name: 'session_projcache', version: 3 },
+      tables: { sessions: { 'session-keep': { title: 'y' } } },
+    }
+    // Deliberately compact: any rewrite would normalise the whitespace.
+    const body = JSON.stringify(index)
+    mkdirSync(dirname(indexPath), { recursive: true })
+    writeFileSync(indexPath, body, 'utf8')
+
+    const result = scrubProjcache(world.base, ['session-absent'])
+    assert.equal(result.skipped, 'no-rows')
+    assert.equal(result.touched, 0)
+    assert.equal(readFileSync(indexPath, 'utf8'), body, 'a no-op must leave the bytes alone')
+  } finally {
+    destroy(world)
+  }
+})
+
+test('R8c · the rewrite is atomic: no temp file survives it', () => {
+  const world = makeWorld()
+  try {
+    const storages = join(world.base, 'storages')
+    const indexPath = join(storages, 'session_projcache.json')
+    const target = 'session-aaaaaaaa-1111-2222-3333-444444444444'
+    mkdirSync(storages, { recursive: true })
+    writeFileSync(
+      indexPath,
+      JSON.stringify({ unit: { name: 'session_projcache', version: 3 }, tables: { sessions: { [target]: { title: 'x' } } } }),
+      'utf8',
+    )
+
+    scrubProjcache(world.base, [target])
+    assert.equal(JSON.parse(readFileSync(indexPath, 'utf8')).tables.sessions[target], undefined, 'the row is gone')
+    const leftovers = readdirSync(storages).filter((name) => name.includes('.tmp-'))
+    assert.deepEqual(leftovers, [], 'the temp file must be renamed away, never left behind')
   } finally {
     destroy(world)
   }

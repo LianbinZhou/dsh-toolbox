@@ -16,10 +16,10 @@
  *     refuses instead of removing something that may be open.
  */
 
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
-import { canonicalSessionId, dshHome, sessionsRootFor } from './paths.js'
+import { canonicalSessionId, dshHome, scrubProjcache, sessionsRootFor } from './paths.js'
 import { createFsProbe } from './probe.js'
 
 /**
@@ -316,52 +316,23 @@ export function createSessionAdapter({ registry, sessions, sessionsRoot, storage
     },
 
     /**
-     * 清理 projection cache（session_projcache.json 的 tables.sessions + 每会话文件）。
-     * 两种拼写都删。
+     * 清理 projection cache（只动 session_projcache.json 的 tables.sessions）。
+     *
+     * 每会话缓存文件 `session_projcache/sessions/<id>.json` **不删**：它是 DSH 的
+     * 标题快照（rows.title），删掉之后恢复回来的会话会显示「未命名」，因为恢复
+     * 路径不会重建它（2026-10-20 实测确认）。
+     *
+     * 写入本身交给 paths.js 的 scrubProjcache：它带 unit 版本防护、只在真删到行时
+     * 才重写、并用临时文件 + rename 原子替换 —— 不自写一份平行的文件逻辑。
      */
     scrubCache(id) {
-      const home = dshHome()
-      const spellings = [String(id), String(id).replace(/^session-/, '')]
-      let touched = 0
-      try {
-        const indexPath = join(home, 'storages', 'session_projcache.json')
-        if (existsSync(indexPath)) {
-          const parsed = JSON.parse(readFileSync(indexPath, 'utf8'))
-          const sessions = parsed && parsed.tables && parsed.tables.sessions
-          if (sessions && typeof sessions === 'object') {
-            let changed = false
-            for (const key of spellings) {
-              if (Object.prototype.hasOwnProperty.call(sessions, key)) {
-                delete sessions[key]
-                changed = true
-                touched += 1
-              }
-            }
-            if (changed) writeFileSync(indexPath, JSON.stringify(parsed, null, 2), 'utf8')
-          }
-        }
-      } catch (error) {
-        /* 索引坏了就交给宿主，别在删除路径上炸 */
+      const result = scrubProjcache(dshHome(), [String(id)])
+      if (result.skipped !== null && result.skipped !== 'no-rows' && result.skipped !== 'absent') {
+        // unit-mismatch / unparsable / threw：宿主换了格式或文件坏了，我们跳过，
+        // 留给宿主自己收拾。缓存里剩一行是装饰性问题，不影响功能。
+        console.warn('[dsh-toolbox] scrubCache 跳过 id=' + id + ' reason=' + result.skipped)
       }
-      // 每会话缓存文件（session_projcache/sessions/<id>.json）**不删**。
-      // 它是 DSH 的标题快照（rows.title）：删掉之后恢复回来的会话会显示「未命名」，
-      // 因为恢复路径不会重建它。目录已经移走，保留快照不会造成幽灵行
-      // （侧栏列表以 sessions.list / 目录为准，缓存只提供标题）。
-      const failures = []
-      for (const key of []) {
-        try {
-          const file = join(perSessionDir, key + '.json')
-          if (existsSync(file)) {
-            unlinkSync(file)
-            touched += 1
-          }
-        } catch (error) {
-          // Windows 上文件被占用（EBUSY/EPERM）会走到这里：不能当成功。
-          failures.push(key + ':' + String((error && error.code) || error))
-        }
-      }
-      if (failures.length > 0) console.warn('[dsh-toolbox] scrubCache 未删净: ' + failures.join(', '))
-      return { ok: failures.length === 0, touched, failed: failures }
+      return { ok: result.ok, touched: result.touched, failed: [], skipped: result.skipped }
     },
 
     /**

@@ -9,7 +9,7 @@
  * @module dsh-toolbox/host/features/archive/paths (migrated verbatim from dsh-archive-manager, S4-b)
  */
 
-import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 
@@ -181,13 +181,56 @@ function removeSessionDir(dirPath, sessionsRoot) {
 }
 
 /**
- * Best-effort projection-cache scrub: the aggregate index
- * (`<dshHome>/storages/session_projcache.json`) plus the per-session file
- * (`<dshHome>/storages/session_projcache/sessions/<id>.json`). Both spellings
- * of the id are handled. A stale entry here is cosmetic, so every failure is
- * swallowed — the harness owns these files and will reconcile anyway.
+ * The one storage domain this scrub is allowed to rewrite. The harness owns
+ * `session_projcache.json`; an unknown `unit` header means the format moved on
+ * under us, so the file is left byte-identical instead of guessed at.
+ */
+const PROJCACHE_UNIT = Object.freeze({ name: "session_projcache", version: 3 });
+
+/**
+ * Replace one file atomically: write a sibling temp file, then rename over the
+ * target. A crash midway can therefore never leave a half-written index the
+ * harness would then fail to load. The temp file is cleaned up when the write
+ * or the rename throws.
+ * @param file - absolute target path.
+ * @param text - complete new contents.
+ */
+function replaceAtomically(file, text) {
+	const temp = `${file}.tmp-${process.pid}-${Date.now()}`;
+	try {
+		writeFileSync(temp, text, "utf8");
+		renameSync(temp, file);
+	} catch (error) {
+		try {
+			if (existsSync(temp)) unlinkSync(temp);
+		} catch {
+			// Best effort: the rename is the part that has to be atomic.
+		}
+		throw error;
+	}
+}
+
+/**
+ * Projection-cache scrub for a session that is being deleted: the aggregate
+ * index row only (`<dshHome>/storages/session_projcache.json` → `tables.sessions`).
+ *
+ * The per-session file (`storages/session_projcache/sessions/<id>.json`) is
+ * deliberately NEVER touched. It is the harness's title snapshot (`rows.title`):
+ * dropping it makes a restored session render as "未命名", because the restore
+ * path does not rebuild it (verified against the harness projection cache on
+ * 2026-10-20). A stale row in this cache is cosmetic — the harness owns the file
+ * and reconciles it — so every failure here is swallowed, never raised.
+ *
+ * Safety ladder, because this reaches into another package's storage:
+ *   1. an unknown `unit` header is refused, leaving the file byte-identical;
+ *   2. an unparsable file is never rewritten;
+ *   3. the file is only rewritten when a row actually went away;
+ *   4. the rewrite is atomic (temp file + rename).
+ *
  * @param home - absolute harness home.
  * @param ids - session ids whose cache rows are dropped.
+ * @returns `{ ok, touched, skipped }`, where `skipped` names the early exit and
+ *   `ok: false` reports a swallowed failure instead of throwing one.
  */
 function scrubProjcache(home, ids) {
 	// A mutating helper must not trust its caller: an id that cannot be a file
@@ -199,35 +242,37 @@ function scrubProjcache(home, ids) {
 	};
 	const indexPath = join(home, "storages", "session_projcache.json");
 	try {
-		if (existsSync(indexPath)) {
-			const parsed = JSON.parse(readFileSync(indexPath, "utf8"));
-			const sessions = parsed?.tables?.sessions;
-			if (sessions !== void 0 && sessions !== null) {
-				let touched = false;
-				for (const id of ids) {
-					for (const key of keysBy(id)) {
-						if (Object.prototype.hasOwnProperty.call(sessions, key)) {
-							delete sessions[key];
-							touched = true;
-						}
-					}
+		if (!existsSync(indexPath)) return { ok: true, touched: 0, skipped: "absent" };
+		let parsed;
+		try {
+			parsed = JSON.parse(readFileSync(indexPath, "utf8"));
+		} catch {
+			return { ok: true, touched: 0, skipped: "unparsable" };
+		}
+		const unit = parsed?.unit;
+		if (unit === null || typeof unit !== "object" || unit.name !== PROJCACHE_UNIT.name || unit.version !== PROJCACHE_UNIT.version) {
+			return { ok: true, touched: 0, skipped: "unit-mismatch" };
+		}
+		const sessions = parsed?.tables?.sessions;
+		if (sessions === null || typeof sessions !== "object") {
+			return { ok: true, touched: 0, skipped: "no-sessions-table" };
+		}
+		let touched = 0;
+		for (const id of ids) {
+			for (const key of keysBy(id)) {
+				if (Object.prototype.hasOwnProperty.call(sessions, key)) {
+					delete sessions[key];
+					touched += 1;
 				}
-				if (touched) writeFileSync(indexPath, JSON.stringify(parsed, null, 2), "utf8");
 			}
 		}
+		if (touched === 0) return { ok: true, touched: 0, skipped: "no-rows" };
+		replaceAtomically(indexPath, JSON.stringify(parsed, null, 2));
+		return { ok: true, touched, skipped: null };
 	} catch {
-		// A corrupt index is left alone; the harness owns it.
-	}
-	const perSessionDir = join(home, "storages", "session_projcache", "sessions");
-	for (const id of ids) {
-		for (const key of keysBy(id)) {
-			const file = join(perSessionDir, `${key}.json`);
-			try {
-				if (existsSync(file)) unlinkSync(file);
-			} catch {
-				// Same best-effort contract.
-			}
-		}
+		// The harness owns this file and reconciles it; a row we failed to drop
+		// is cosmetic. A delete cleanup must never throw from here.
+		return { ok: false, touched: 0, skipped: "threw" };
 	}
 }
 
