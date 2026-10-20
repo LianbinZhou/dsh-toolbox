@@ -12,12 +12,25 @@
 #    `sessionSearch` switch only controls the agent-facing tool. That is
 #    deliberate and documented in the README.
 #
-#    NOTE: `path` is required by the official schema and is machine specific.
-#    A published build must switch to `:memory:` or a launcher-provided path.
+#    NOTE: `path` is required by the official schema, but it must NEVER be a
+#    machine specific absolute path. v0.7.1 hardcoded the author's own home
+#    directory here, which silently broke session search on every other machine
+#    (the path does not exist there). Since v0.7.3 the published bundle uses
+#    `:memory:` instead, so it is portable by construction:
+#
+#      · the index lives in this process only, and is rebuilt on the first
+#        search after every start (`openAt: first-search`); nothing is written
+#        to disk and nothing can point at a foreign user's directory;
+#      · a launcher that knows a genuine per-user location can still supply one
+#        through the boot-context slot `launcherSessionQueryPath`.
+#
+#    Cost of `:memory:`: the index is not persisted across restarts, so the
+#    first search after each start pays a one-off rebuild. That is the trade we
+#    accept for a bundle other people can install safely.
 # ---------------------------------------------------------------------------
 - id: session-query-sqlite
   config:
-    path: 'C:\Users\zhou0\.dsh\storages\session-search.db'
+    path: ':memory:'
     openAt: first-search
 
 # ---------------------------------------------------------------------------
