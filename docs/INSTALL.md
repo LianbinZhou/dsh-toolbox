@@ -220,6 +220,22 @@ dsh plugin --profile web add link:/home/你的用户名/dsh-toolbox
 - **Web 版**：桌面「关闭DSH」→ 等窗口关掉 → 再双击「Web版DeepSeek-Harness」
 - **桌面版**：完全退出应用（不是最小化）再打开
 
+> ⚠️ **重启完还要浏览器硬刷新一次：`Ctrl + Shift + R`（Windows/Linux）或 `Command + Shift + R`（macOS）。两件都要做。**
+>
+> 只重启不刷新、或只刷新不重启，都可能撞上这条「假故障」：
+>
+> ```text
+> 历史加载失败：typert gateway: session/follow:
+> active Service "sessionController" is unavailable（gateway/service-unavailable）
+> ```
+>
+> **这不是插件坏了，也不是你装错了。** 装插件会让 profile 的 `cordis.patch.yml` 变化，
+> DSH 在**热重组**那零点几秒里，`sessionController` 服务会短暂下线；页面正好这时候请求就报这个。
+> 按上面的「重启 + 硬刷新」再来一遍即可恢复。
+>
+> **实测记录（Linux，2026-10-23）**：装完立刻出现此报错，重启 + 硬刷新后消失，
+> 随后 `session_search` 工具立刻返回真实结果，证明搜索链路正常。
+
 ### 5.2 看插件列表里有没有这一行
 
 打开 DSH → 左侧栏「**插件管理**」（或设置里的 Plugins 页）→ 找到一行 **dsh-toolbox**。
@@ -273,6 +289,27 @@ dsh plugin --profile web remove dsh-toolbox
 | 全文搜索索引 | 还在 `~/.dsh/storages/` 里 |
 
 **只有插件本身被移除**，你的会话和草稿一条都不会少。
+
+### 如果你是「方式 B（`link:` 本地源码）」装的
+
+`dsh plugin remove` 会清掉 `package.json` 的依赖和 `bundles` 列表，但有一处**它不删**：
+
+**`node_modules` 里的符号链接不会自动删除**（从 npm 装的会删，`link:` 的不会）。
+
+手动补一刀即可（只删链接，**不会动你的源码目录**）：
+
+```sh
+# Linux / macOS
+rm ~/.dsh/profiles/web/node_modules/dsh-toolbox
+```
+
+```powershell
+# Windows PowerShell
+Remove-Item "$env:USERPROFILE\.dsh\profiles\web\node_modules\dsh-toolbox"
+```
+
+> **实测记录（Linux，2026-10-23）**：卸载另外两个 `link:` 型旧包时踩到——
+> `package.json` 和 `bundles` 都清干净了，但 `node_modules` 里的软链还在。
 
 ### 想确认彻底干净
 
@@ -374,7 +411,14 @@ path: 'C:\Users\zhou0\.dsh\storages\session-search.db'
 
 ### 8.3 本文档的实测范围
 
-见第 9 节，Windows 全流程实测；Linux / macOS 未实机验证。
+| 平台 | 状态 |
+|---|---|
+| **Windows** | ✅ 全流程实机验证（见第 9 节） |
+| **Linux（Mint 22.3 Xfce / Ubuntu noble 基底）** | ✅ **已实机验证通过**（2026-10-23，见第 9 节） |
+| **macOS** | ⚠️ 尚未实机验证 |
+
+Linux 和 Windows 用的是**完全相同的命令**，唯一的差异是：中国大陆网络下，
+必须先给命令设 HTTP 代理才能访问 github.com（详见第 7 节 Q6）。
 
 ---
 
@@ -396,13 +440,47 @@ path: 'C:\Users\zhou0\.dsh\storages\session-search.db'
 
 > 测试用的临时 profile 在每轮测试后**已删除**，没有动过你的 `web` profile。
 
+### Linux 实机实测（2026-10-23 补充）
+
+**环境**：Linux Mint 22.3 Xfce（Ubuntu `noble` 基底）· 内核 `6.14.0-37` · Node `v22.23.3` ·
+pnpm `10.34.7` · DSH `@deepseek-ai/dsh@0.2.1-rc.2`（本地安装，非 npx）· 中国大陆 + HTTP 代理
+
+| # | 执行的命令 / 检查 | 退出码 | 耗时 | 结果 |
+|---|---|---|---|---|
+| L1 | `dsh plugin --profile web add github:LianbinZhou/dsh-toolbox` | **0** | **5.9s** | 一次成功；`bundles` 自动写入 `dsh-toolbox` |
+| L2 | 检查安装产物 | — | — | `client.js` **133,735 字节**，与 Windows 实测**逐字节一致** |
+| L3 | `node --check client.js` / `index.js` | 0 | — | 语法正常 |
+| L4 | `dsh --profile web --dump-config`（独立进程，不碰运行实例） | **0** | — | 1576 行、**0 报错**；`session-query-sqlite` 正确改成 `:memory:` + `first-search` |
+| L5 | 启动日志 | — | — | `session_search installed` / `archive services ready` / 7 条路由已挂，**0 错误** |
+| L6 | 实调 `session_search` 工具 | — | — | 立刻返回真实结果（会话搜索链路通） |
+| L7 | `curl /api/archive-manager/token` | — | — | **200**（归档 HTTP 接口已挂） |
+| L8 | `dsh plugin --profile web remove dsh-toolbox` | **0** | 1.2–1.4s | 移除成功；`bundles` 自动删掉该行 |
+
+**耗时对比**：Linux 5.9s / Windows 8.4s，同一量级；安装产物完全相同。
+
+**Linux 上额外确认的一点**：宿主服务是**按依赖顺序晚到**的，启动日志会先出现
+
+```text
+[dsh-toolbox] 宿主服务不可用: webServer（不存在）—— 相关子功能已禁用
+[dsh-toolbox] 宿主服务不可用: workspaceRegistry（不存在）—— 相关子功能已禁用
+```
+
+随后自动变成为
+
+```text
+[dsh-toolbox] webServer became available; syncing the archive routes
+[dsh-toolbox] archive adapter probe: workspaceRegistry=object, sessions=object | 自检 missing=[] degraded=[]
+```
+
+这是**防腐层在正常工作**（先降级、后自愈），不是故障，看到 `missing=[] degraded=[]` 就说明全部到位。
+
 ### 未实测的部分（老实交代）
 
 | 项目 | 状态 | 原因 |
 |---|---|---|
-| Linux（Ubuntu / Debian 等） | ⚠️ 未实测 | 本机只有 Windows，未安装 WSL。命令是 `dsh`/`npm`/`git` 的通用写法，语义与 Windows 一致 |
-| macOS | ⚠️ 未实测 | 无环境。同上 |
+| ~~Linux（Ubuntu / Debian 等）~~ | ✅ **已实测（2026-10-23）** | 见上方「Linux 实机实测」 |
+| macOS | ⚠️ 未实测 | 无环境 |
 | 桌面版 profile 安装 | ⚠️ 未实测 | 官方禁止命令行操作，只能在应用内验证 |
 | 「插件列表出现一行 + 打开开关」 | ⚠️ 未逐步截图 | 属于 GUI 操作，请按第 5 节自查 |
 
-如果你在 Linux 或 macOS 上跑这份指南卡住了，**不是你的问题**——把卡住的那一步和报错原文告诉我，我改文档。
+如果你在 macOS 上跑这份指南卡住了，**不是你的问题**——把卡住的那一步和报错原文告诉我，我改文档。
