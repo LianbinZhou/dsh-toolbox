@@ -16,7 +16,8 @@ https://github.com/LianbinZhou/dsh-toolbox
 请按顺序执行，每一步做完告诉我结果：
 
 1. 先判断我的 DSH 是 Web 版还是桌面版（看地址端口：3080 = Web 版）。
-   如果是桌面版，请停下并告诉我「桌面版不能用命令行装，要在应用内操作」，不要继续。
+   如果是桌面版：**命令行装不了**（官方独占管理），请停下告诉我这一点，不要硬跑命令。
+   如果用户坚持要装，告诉他「桌面版有一条手动路径，但不是官方支持，见 8.2 节」，让他自己决定。
 
 2. 执行安装（只适用于 Web 版）：
    dsh plugin --profile web add github:LianbinZhou/dsh-toolbox
@@ -86,9 +87,11 @@ dsh plugin --profile web remove dsh-toolbox
 | 你的 DSH | 地址栏端口 | 能不能用本文的命令 |
 |---|---|---|
 | **Web 版**（桌面「Web版DeepSeek-Harness」） | `127.0.0.1:3080` | ✅ 能 |
-| **桌面版**（桌面「桌面版DeepSeek Harness」） | 随机端口（如 19387） | ❌ 不能，会报错 |
+| **桌面版**（桌面「桌面版DeepSeek Harness」） | 随机端口（如 19387） | ❌ 命令行不行（会报错）；✅ 手动改文件可以（见 8.2） |
 
-桌面版的 profile 由应用独占管理，命令行会直接拒绝。桌面版请在应用内的「插件管理」页操作。
+桌面版的 profile 由应用独占管理，`dsh plugin --profile desktop ...` 会直接拒绝。
+**但这不等于"桌面版装不了"**——本机已用「改 profile 文件 + 建软链」的方式在桌面版装成并正常使用（2026-10-11 起），
+细节和回滚方法在 **8.2 节**。那条路**非官方支持**，桌面版升级前请先备份。
 
 ---
 
@@ -405,9 +408,86 @@ path: 'C:\Users\zhou0\.dsh\storages\session-search.db'
 > `~/.dsh/profiles/web/cordis.patch.yml` 里覆盖这一条，用 `!!js` 表达式算路径，
 > 不要写死绝对路径。这是可选项，默认的 `:memory:` 已经够用。
 
-### 8.2 桌面版用户不要用本文的命令行
+### 8.2 桌面版：命令行不行，但手动可以（**非官方路径**）
 
-见第 2 节。
+**结论先说**：`dsh plugin --profile desktop add ...` **会被官方拒绝**（见第 2 节）。
+但要在桌面版里用 toolbox，**手动改 profile 文件是可行的**——本机 2026-10-11 实测装成，持续使用至今。
+
+> ⚠️ **这是非官方路径**。桌面版 profile 由 Electron 应用独占管理，以后升级可能覆盖或改动内部结构。
+> **装之前务必先备份**，装完留好回滚文件。
+
+#### 装（先把桌面版完全关掉）
+
+**第 1 步：备份两个文件**
+
+```powershell
+$p = "$env:USERPROFILE\.dsh\profiles\desktop"
+Copy-Item "$p\package.json"    "$p\package.json.bak-before-toolbox"
+Copy-Item "$p\pnpm-lock.yaml"  "$p\pnpm-lock.yaml.bak-before-toolbox"
+```
+
+**第 2 步：改 `package.json`**
+
+在 `dependencies` 里加一行，在 `dsh.profile.bundles` 数组末尾加一项：
+
+```json
+{
+  "dependencies": {
+    "dsh-toolbox": "link:C:/你的路径/dsh-plugins/dsh-toolbox"
+  },
+  "dsh": {
+    "profile": {
+      "bundles": ["已有的...", "dsh-toolbox"]
+    }
+  }
+}
+```
+
+**第 3 步：建符号链接**（Windows 需要管理员权限或开启开发者模式）
+
+```powershell
+New-Item -ItemType SymbolicLink `
+  -Path   "$env:USERPROFILE\.dsh\profiles\desktop\node_modules\dsh-toolbox" `
+  -Target "C:\你的路径\dsh-plugins\dsh-toolbox"
+```
+
+**第 4 步：装依赖**
+
+```powershell
+cd "$env:USERPROFILE\.dsh\profiles\desktop"
+pnpm install
+```
+
+**第 5 步：启动桌面版**，看插件列表里有没有 `dsh-toolbox` 那一行。
+
+#### 卸载（同样手动）
+
+1. 从 `package.json` 的 `dependencies` 和 `bundles` 里删掉 `dsh-toolbox`
+2. **手动删软链**（`dsh plugin remove` 不会管这个）：
+
+```powershell
+Remove-Item "$env:USERPROFILE\.dsh\profiles\desktop\node_modules\dsh-toolbox"
+```
+
+3. 回到 profile 目录跑一次 `pnpm install`
+
+#### 出问题怎么回滚
+
+```powershell
+$p = "$env:USERPROFILE\.dsh\profiles\desktop"
+Copy-Item "$p\package.json.bak-before-toolbox"   "$p\package.json"   -Force
+Copy-Item "$p\pnpm-lock.yaml.bak-before-toolbox" "$p\pnpm-lock.yaml" -Force
+Remove-Item "$p\node_modules\dsh-toolbox" -ErrorAction SilentlyContinue
+cd $p; pnpm install
+```
+
+#### 实测记录（Windows 桌面版）
+
+| 日期 | 操作 | 结果 |
+|---|---|---|
+| 2026-10-11 | 手动改 `package.json` + 建软链 + `pnpm install` | ✅ 装成，插件生效，正常使用 |
+| 2026-10-20 | 卸载两个旧的 `link:` 包，换装 toolbox | ✅ 成功；软链需手动删 |
+| 2026-10-21 | 用同样方式升级 7 个第三方插件 | ✅ 成功；`pnpm install --frozen-lockfile` 通过 |
 
 ### 8.3 本文档的实测范围
 
@@ -415,6 +495,7 @@ path: 'C:\Users\zhou0\.dsh\storages\session-search.db'
 |---|---|
 | **Windows** | ✅ 全流程实机验证（见第 9 节） |
 | **Linux（Mint 22.3 Xfce / Ubuntu noble 基底）** | ✅ **已实机验证通过**（2026-10-23，见第 9 节） |
+| **Windows 桌面版（Electron 应用）** | ✅ **手动安装已实测**（2026-10-11，见 8.2）；命令行被官方拒绝 |
 | **macOS** | ⚠️ 尚未实机验证 |
 
 Linux 和 Windows 用的是**完全相同的命令**，唯一的差异是：中国大陆网络下，
@@ -480,7 +561,7 @@ pnpm `10.34.7` · DSH `@deepseek-ai/dsh@0.2.1-rc.2`（本地安装，非 npx）�
 |---|---|---|
 | ~~Linux（Ubuntu / Debian 等）~~ | ✅ **已实测（2026-10-23）** | 见上方「Linux 实机实测」 |
 | macOS | ⚠️ 未实测 | 无环境 |
-| 桌面版 profile 安装 | ⚠️ 未实测 | 官方禁止命令行操作，只能在应用内验证 |
+| ~~桌面版 profile 安装~~ | ✅ **已手动实测（2026-10-11）** | 命令行被拒；改用「改 profile 文件 + 建软链」，见 8.2。**非官方路径，升级前先备份** |
 | 「插件列表出现一行 + 打开开关」 | ⚠️ 未逐步截图 | 属于 GUI 操作，请按第 5 节自查 |
 
 如果你在 macOS 上跑这份指南卡住了，**不是你的问题**——把卡住的那一步和报错原文告诉我，我改文档。

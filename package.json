@@ -1,6 +1,6 @@
 {
   "name": "dsh-toolbox",
-  "version": "0.7.6",
+  "version": "0.7.7",
   "private": true,
   "type": "module",
   "description": "One container for the personal DSH plugin set: one row, one settings card, one switch per feature",
